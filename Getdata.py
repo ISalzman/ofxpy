@@ -77,7 +77,7 @@ def getSite(ofx):
             thisBankid = FieldVal(sites[s], 'bankid')
             if thisFid == fid or thisBankid == bankid:
                 site = sites[s]
-                print 'Matched import file to site *%s*' % s
+                print('Matched import file to site *%s*' % s)
                 break
 
     return site
@@ -85,10 +85,10 @@ def getSite(ofx):
 if __name__=="__main__":
 
     stat1 = True    #overall status flag across all operations (true == no errors getting data)
-    print AboutTitle + ", Ver: " + AboutVersion + "\n"
+    print(AboutTitle + ", Ver: " + AboutVersion + "\n")
 
-    if Debug: print "***Running in DEBUG mode.  See Control2.py to disable***\n"
-    doit = raw_input("Download transactions? (Y/N/I=Interactive) [Y] ").upper()
+    if Debug: print("***Running in DEBUG mode.  See Control2.py to disable***\n")
+    doit = input("Download transactions? (Y/N/I=Interactive) [Y] ").upper()
     if len(doit) > 1: doit = doit[:1]    #keep first letter
     if doit == '': doit = 'Y'
     if doit in "YI":
@@ -96,10 +96,10 @@ if __name__=="__main__":
         interval = userdat.defaultInterval
         if userdat.promptInterval:
             try:
-                p = int2(raw_input("Download interval (days) [" + str(interval) + "]: "))
+                p = int2(input("Download interval (days) [" + str(interval) + "]: "))
                 if p>0: interval = p
             except:
-                print "Invalid entry. Using defaultInterval=" + str(interval)
+                print("Invalid entry. Using defaultInterval=" + str(interval))
 
         #get account info
         #AcctArray = [['SiteName', 'Account#', 'AcctType', 'UserName', 'PassWord'], ...]
@@ -107,17 +107,19 @@ if __name__=="__main__":
         ofxList = []
         quoteFile1, quoteFile2, htmFileName = '','',''
 
-        if len(AcctArray) > 0 and pwkey <> '':
+        if len(AcctArray) and len(pwkey):
             #if accounts are encrypted... decrypt them
             pwkey=decrypt_pw(pwkey)
             AcctArray = acctDecrypt(AcctArray, pwkey)
 
         #delete old data files
         ofxfiles = xfrdir+'*.ofx'
-        if glob.glob(ofxfiles) <> []:
-            os.system("del "+ofxfiles)
+        #if glob.glob(ofxfiles) != []:
+        #    os.system("del "+ofxfiles)
+        for ofxfile in glob.glob(ofxfiles):
+            os.remove(ofxfile)
 
-        print "Download interval= {0} days".format(interval)
+        print("Download interval= {0} days".format(interval))
 
         #create process Queue in the right order
         Queue = ['Accts', 'importFiles']
@@ -130,7 +132,7 @@ if __name__=="__main__":
 
             if QEntry == 'Accts':
                 if len(AcctArray) == 0:
-                  print "No accounts have been configured. Run SETUP.PY to add accounts"
+                  print("No accounts have been configured. Run SETUP.PY to add accounts")
 
                 #process accounts
                 badConnects = []   #track [sitename, username] for failed connections so we don't risk locking an account
@@ -142,14 +144,14 @@ if __name__=="__main__":
                         else:
                             ofxList.append([acct[0], acct[1], ofxFile])
                         stat1 = stat1 and status
-                        print ""
+                        print("")
 
             if QEntry == 'importFiles':
                 #process files from import folder [manual user downloaded files]
                 #include anything that looks like a valid ofx file regardless of extension
                 #attempts to find site entry by FID found in the ofx file
 
-                print 'Searching %s for statements to import' % importdir
+                print('Searching %s for statements to import' % importdir)
                 for f in glob.glob(importdir+'*.*'):
                     fname     = os.path.basename(f)   #full base filename.extension
                     bname = os.path.splitext(fname)[0]     #basename w/o extension
@@ -159,7 +161,7 @@ if __name__=="__main__":
 
                     #only import if it looks like an ofx file
                     if validOFX(dat) == '':
-                        print "Importing %s" % fname
+                        print("Importing %s" % fname)
                         if 'NEWFILEUID:PSIMPORT' not in dat[:200]:
                             #only scrub if it hasn't already been imported (and hence, scrubbed)
                             site = getSite(dat)
@@ -184,59 +186,59 @@ if __name__=="__main__":
                 status, quoteFile1, quoteFile2, htmFileName = quotes.getQuotes()
                 z = ['Stock/Fund Quotes','',quoteFile1]
                 stat1 = stat1 and status
-                if glob.glob(quoteFile1) <> []:
+                if glob.glob(quoteFile1) != []:
                     ofxList.append(z)
-                print ""
+                print("")
 
                 # display the HTML file after download if requested to always do so
                 if status and userdat.showquotehtm: os.startfile(htmFileName)
 
         if len(ofxList) > 0:
-            print '\nFinished downloading data\n'
+            print('\nFinished downloading data\n')
             verify = False
             gogo = 'Y'
-            if userdat.combineofx and gogo <> 'V':
+            if userdat.combineofx and gogo != 'V':
                 cfile=combineOfx(ofxList)       #create combined file
 
             if doit == 'I' or Debug:
-                gogo = raw_input('Upload online data to Money? (Y/N/V=Verify) [Y] ').upper()
+                gogo = input('Upload online data to Money? (Y/N/V=Verify) [Y] ').upper()
                 if len(gogo) > 1: gogo = gogo[:1]    #keep first letter
                 if gogo == '': gogo = 'Y'
 
             if gogo in 'YV':
-                if glob.glob(quoteFile2) <> []:
-                    if Debug: print "Importing ForceQuotes statement: " + quoteFile2
+                if glob.glob(quoteFile2) != []:
+                    if Debug: print("Importing ForceQuotes statement: " + quoteFile2)
                     runFile(quoteFile2)  #force transactions for MoneyUK
-                    raw_input('ForceQuote statement loaded.  Accept in Money and press <Enter> to continue.')
+                    input('ForceQuote statement loaded.  Accept in Money and press <Enter> to continue.')
 
-                print '\nSending statement(s) to Money...'
-                if userdat.combineofx and cfile and gogo <> 'V':
+                print('\nSending statement(s) to Money...')
+                if userdat.combineofx and cfile and gogo != 'V':
                     runFile(cfile)
                 else:
                     for file in ofxList:
                         upload = True
                         if gogo == 'V':
                             #file[0] = site, file[1] = accnt#, file[2] = ofxFile
-                            upload = (raw_input('Upload ' + file[0] + ' : ' + file[1] + ' (Y/N) ').upper() == 'Y')
+                            upload = input('Upload ' + file[0] + ' : ' + file[1] + ' (Y/N) ').upper() == 'Y'
 
                         if upload:
-                           if Debug: print "Importing " + file[2]
+                           if Debug: print("Importing " + file[2])
                            runFile(file[2])
 
                         time.sleep(0.5)   #slight delay, to force load order in Money
 
             #ask to show quotes.htm if defined in sites.dat
             if userdat.askquotehtm:
-                ask = raw_input('Open <Quotes.htm> in the default browser (y/n)?').upper()
+                ask = input('Open <Quotes.htm> in the default browser (y/n)?').upper()
                 if ask=='Y': os.startfile(htmFileName)  #don't wait for browser close
 
         else:
             if len(AcctArray)>0 or (getquotes and len(userdat.stocks)>0):
-                print "\nNo files were downloaded. Verify network connection and try again later."
-            raw_input("Press <Enter> to continue...")
+                print("\nNo files were downloaded. Verify network connection and try again later.")
+            input("Press <Enter> to continue...")
 
         if Debug:
-            raw_input("DEBUG END:  Press <Enter> to continue...")
+            input("DEBUG END:  Press <Enter> to continue...")
         elif not stat1:
-            print "\nOne or more accounts (or quotes) may not have downloaded correctly."
-            raw_input("Review and press <Enter> to continue...")
+            print("\nOne or more accounts (or quotes) may not have downloaded correctly.")
+            input("Review and press <Enter> to continue...")

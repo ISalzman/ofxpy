@@ -66,7 +66,7 @@
 # 19Nov2019*rlc
 #   - Add site delay option
 
-import time, os, sys, httplib, urllib2, glob, random, re
+import time, os, sys, http.client, urllib.request, urllib.error, urllib.parse, glob, random, re
 import getpass, scrubber, site_cfg, uuid
 from control2 import *
 from rlib1 import *
@@ -92,12 +92,12 @@ class OFXClient:
         self.url = FieldVal(self.site,"url")
 
         #example: url='https://test.ofx.com/my/script'
-        prefix, path = urllib2.splittype(self.url)
         #path='//test.ofx.com/my/script';  Host= 'test.ofx.com' ; Selector= '/my/script'
-        self.urlHost, self.urlSelector = urllib2.splithost(path)
+        self.urlHost = urllib.parse.urlparse(self.url).netloc
+        self.urlSelector = urllib.parse.urlparse(self.url).path
         if Debug:
-            print 'urlHost    :', self.urlHost
-            print 'urlSelector:', self.urlSelector, '\n'
+            print('urlHost    :', self.urlHost)
+            print('urlSelector:', self.urlSelector, '\n')
         self.cookie = 3
 
     def _cookie(self):
@@ -239,7 +239,7 @@ class OFXClient:
         response=False
         try:
             errmsg= "** An ERROR occurred attempting HTTPS connection to"
-            h = httplib.HTTPSConnection(self.urlHost, timeout=5)
+            h = http.client.HTTPSConnection(self.urlHost, timeout=5)
             if Debug: h.set_debuglevel(1)
 
             #proxy config for fiddler tests
@@ -260,7 +260,7 @@ class OFXClient:
 
                     h.putheader('Content-Type', 'application/x-ofx')
                     h.putheader('Host', self.urlHost)
-                    h.putheader('Content-Length', str(len(query)))
+                    h.putheader('Content-Length', len(query))
                     h.putheader('Connection', 'Keep-Alive')
 
                     #optional parameters are appended only when failure on first pass
@@ -270,10 +270,10 @@ class OFXClient:
                         h.putheader('User-Agent', 'PocketSense')
                         #this is our second pass, so add session cookies if found in first response
                         cookie = response.getheader('set-cookie')   #server cookie(s) provided in last response
-                        if cookie <> None:
-                            if Debug: print '<Response Cookies>', cookie
+                        if cookie != None:
+                            if Debug: print('<Response Cookies>', cookie)
                             h.putheader('cookie', cookie)
-                    h.endheaders(query)
+                    h.endheaders(query.encode('utf-8'))
 
                 else:
                    #i=2: try V1 request (deprecated).  Shouldn't get here... keeping "just in case"
@@ -285,7 +285,7 @@ class OFXClient:
                 #allow up to 30 secs for the server response (if it takes longer, something's wrong)
                 h.sock.settimeout(30)
                 response = h.getresponse()
-                respDat  = response.read()
+                respDat  = response.read().decode('utf-8')
 
                 #if this is a OFX 2.x response, replace the header w/ OFX 1.x
                 if self.ofxver[0] == '2':
@@ -295,19 +295,19 @@ class OFXClient:
                 #did we get a valid response?  if not, try again w/ different request header
                 if validOFX(respDat)=='': break
 
-            f = file(name,"w")
+            f = open(name,"w")
             f.write(respDat)
             f.close()
 
         except Exception as e:
             self.status = False
-            print errmsg, self.urlHost
-            print "   Exception type  :", type(e)
-            print "   Exception val   :", e
+            print(errmsg, self.urlHost)
+            print("   Exception type  :", type(e))
+            print("   Exception val   :", e)
 
             if response:
-                print "   HTTPS ResponseCode  :", response.status
-                print "   HTTPS ResponseReason:", response.reason
+                print("   HTTPS ResponseCode  :", response.status)
+                print("   HTTPS ResponseReason:", response.reason)
 
         if h: h.close()
 
@@ -337,11 +337,11 @@ def getOFX(account, interval):
     #add delay prior to connect if defined for site
     delay = FieldVal(site, "DELAY")
     if delay > 0.0:
-        print "Delaying %.1f seconds..." % delay
+        print("Delaying %.1f seconds..." % delay)
         time.sleep(delay)
 
     client = OFXClient(site, user, password)
-    print sitename,':',acct_num,": Getting records since: ",dtstart
+    print(sitename,':',acct_num,": Getting records since: ",dtstart)
 
     status = True
 
@@ -378,9 +378,9 @@ def getOFX(account, interval):
 
         SendRequest = True
         if Debug:
-            print query
-            print
-            ask = raw_input('DEBUG:  Send request to bank server (y/n)?').upper()
+            print(query)
+            print()
+            ask = input('DEBUG:  Send request to bank server (y/n)?').upper()
             if ask=='N': return True, ''
 
         #do the deed
@@ -395,7 +395,7 @@ def getOFX(account, interval):
             content = f.read().upper()
             f.close
 
-            if acct_num <> _acct_num:
+            if acct_num != _acct_num:
                 #replace bank account number w/ value defined in sites.dat
                 content = content.replace('<ACCTID>'+acct_num, '<ACCTID>'+ _acct_num)
                 f = open(ofxFileName,'w')
@@ -405,7 +405,7 @@ def getOFX(account, interval):
             content = ''.join(a for a in content if a not in '\r\n ')  #strip newlines & spaces
             msg = validOFX(content)  #checks for valid format and error messages
 
-            if msg<>'':
+            if msg!='':
                 #throw exception and exit
                 raise Exception(msg)
 
@@ -422,9 +422,9 @@ def getOFX(account, interval):
 
     except Exception as inst:
         status = False
-        print inst
-        if glob.glob(ofxFileName) <> []:
-           print '**  Review', ofxFileName, 'for possible clues...'
+        print(inst)
+        if glob.glob(ofxFileName) != []:
+           print('**  Review', ofxFileName, 'for possible clues...')
         if Debug:
             traceback.print_exc()
 

@@ -73,7 +73,7 @@
 # 24Mar2018*rlc
 #   -Use longName when available for Yahoo quotes.  Mutual fund *family* name is sometimes given as shortName (see vhcox as example)
 
-import os, sys, time, urllib2, socket, shlex, re, csv, uuid, json
+import os, sys, time, urllib.request, socket, shlex, re, csv, uuid, json
 import site_cfg
 from control2 import *
 from rlib1 import *
@@ -111,7 +111,7 @@ class Security:
         #Yahoo! Finance:
         #    name (n), lastprice (l1), date (d1), time(t1), previous close (p), %change (p2)
 
-        if Debug: print "Getting quote for:", self.ticker
+        if Debug: print("Getting quote for:", self.ticker)
 
         self.status=False
         self.source='Y'
@@ -128,14 +128,14 @@ class Security:
             if self.status: self.source='G'
 
         if not self.status:
-            print "** ", self.ticker, ': invalid quote response. Skipping...'
+            print("** ", self.ticker, ': invalid quote response. Skipping...')
             self.name = '*InvalidSymbol*'
         else:
             #show/save what we got   rlc*2010
             # example: "Amazon.com, Inc.",78.46,"9/3/2009","4:00pm", 80.00, "-1.96%"
             # Security names may have embedded commas, so use CSV utility to parse (rlc*2010)
 
-            if Debug: print "Quote result string:", csvtxt
+            if Debug: print("Quote result string:", csvtxt)
 
             self.name    = quote[0]
             self.price   = quote[1]
@@ -156,9 +156,9 @@ class Security:
                 self.pclose = str(float2(self.pclose)*self.multiplier)    #previous close
 
             name = self.ticker
-            if self.symbol <> self.ticker:
+            if self.symbol != self.ticker:
                 name = self.ticker + '(' + self.symbol + ')'
-            print self.source+':' , name, self.price, self.date, self.time, self.pchange
+            print(self.source+':' , name, self.price, self.date, self.time, self.pchange)
 
 
     def csvparse(self, csvtxt):
@@ -184,10 +184,10 @@ class Security:
         self.status=True
 
         try:
-            ht=urllib2.urlopen(url).read()
+            ht=urllib.request.urlopen(url).read()
             self.quoteURL = 'https://finance.yahoo.com/quote/%s' % self.ticker  #html link
         except:
-            if Debug: print "** Error reading " + url + "\n"
+            if Debug: print("** Error reading " + url + "\n")
             self.status = False
 
         if self.status:
@@ -213,11 +213,11 @@ class Security:
                 name = '"' + self._removeIllegalChars(name) + '"'   #cleanup foreign chars and quote
                 csvtxt = ','.join([name, str(price), qdateS, qtimeS, str(lastPrice), changeS])
 
-                if Debug: print "Yahoo csvtxt=",csvtxt
+                if Debug: print("Yahoo csvtxt=",csvtxt)
 
             except:
                 #not formatted as expected?
-                if Debug: print "An error occured by parsing the Yahoo Finance reponse for: ", self.ticker
+                if Debug: print("An error occured by parsing the Yahoo Finance reponse for: ", self.ticker)
                 self.status=False
 
         return csvtxt
@@ -230,16 +230,16 @@ class Security:
 
         self.status = True  # fresh start
         csvtxt = ""
-        if Debug: print "Trying Google Finance for: ", self.ticker
+        if Debug: print("Trying Google Finance for: ", self.ticker)
 
         #Example url:  https://www.google.com/finance?q=msft
         url = GoogleURL + "?q=" + self.ticker
         try:
-            ht=urllib2.urlopen(url).read()
+            ht=urllib.request.urlopen(url).read()
             self.quoteURL = url
 
         except:
-            print "** error reading " + url + "\n"
+            print("** error reading " + url + "\n")
             self.status = False
 
         ticker = self.ticker.replace("^","\^")  #use literal regex character
@@ -280,10 +280,10 @@ class Security:
                 #price may contain commas, but we don't want them
                 price = ''.join([c for c in price if c in '1234567890.'])
                 csvtxt = ','.join([name, price, date2, '04:00PM', '?', pchange])
-                if Debug: print "Google csvtxt=",csvtxt
+                if Debug: print("Google csvtxt=",csvtxt)
             except:
                 self.status=False
-                if Debug: print "An error occured by parsing the Google Finance reponse for: ", self.ticker
+                if Debug: print("An error occured by parsing the Google Finance reponse for: ", self.ticker)
         return csvtxt
 
 class OfxWriter:
@@ -462,7 +462,7 @@ def getQuotes():
     ofxFile1, ofxFile2, htmFileName = '','',''
 
     stockList = []
-    print "Getting security and fund quotes..."
+    print("Getting security and fund quotes...")
     for item in stocks:
         sec = Security(item)
         sec.getQuote()
@@ -503,7 +503,7 @@ def getQuotes():
         #append results to QuoteHistory.csv if enabled
         if status and userdat.savequotehistory:
             csvFile = xfrdir+"QuoteHistory.csv"
-            print "Appending quote results to {0}...".format(csvFile)
+            print("Appending quote results to {0}...".format(csvFile))
             newfile = (glob.glob(csvFile) == [])
             f = open(csvFile,"a")
             if newfile:

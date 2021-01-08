@@ -104,14 +104,14 @@ class site_cfg:
         self.skipFailedLogon = True
 
         if glob.glob(self.datfile) == []:
-            if glob.glob(self.bakfile) <> []:
+            if glob.glob(self.bakfile) != []:
                 #we have a backup file... make it our dat file
                 copy_txt_file(self.bakfile, self.datfile)
-            elif glob.glob(self.tmplfile) <> []:
+            elif glob.glob(self.tmplfile) != []:
                 #we have a template file... make it our dat file
                 copy_txt_file(self.tmplfile, self.datfile)
 
-        if glob.glob(self.datfile) <> []:
+        if glob.glob(self.datfile) != []:
             self.load_cfg()
 
     def load_cfg(self):
@@ -125,7 +125,7 @@ class site_cfg:
         i = YAHOOURL.find("/D/QUOTES.CSV")
         if i > -1:
             self.YahooURL = self.YahooURL[:i]
-            print " * YahooURL truncated to", self.YahooURL, "\n"
+            print(" * YahooURL truncated to", self.YahooURL, "\n")
 
     def load_sites(self):
         f = open(self.datfile, 'r')
@@ -157,7 +157,7 @@ class site_cfg:
 
             if '</SITE>' in lineU:
                 parsing = False    #end parsing site
-                if sitename <> '' and url <> '':
+                if sitename != '' and url != '':
                     X = {sitename: {
                                'CAPS': ['SIGNON', accttype],
                               'FIORG': fiorg,
@@ -275,7 +275,7 @@ class site_cfg:
 
             elif parsing and len(line) > 0:
                 entry = self.parseTicker(line)
-                if entry['ticker'] <> "err":
+                if entry['ticker'] != "err":
                     self.stocks.append(entry)
         #end_for
 
@@ -299,7 +299,7 @@ class site_cfg:
 
             elif parsing and len(line) > 0:
                 entry = self.parseTicker(line)
-                if entry['ticker']  <> "err":
+                if entry['ticker']  != "err":
                     self.funds.append(entry)
         #end_for
 

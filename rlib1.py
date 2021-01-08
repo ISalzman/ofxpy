@@ -16,7 +16,7 @@
 #   - prefix positive change w/ '+' symbol
 
 import os, glob, site_cfg, time, uuid, re, random
-import sys, pyDes, md5, pickle, locale, urllib2
+import sys, pyDes, hashlib, pickle, locale, urllib.request, getpass
 from datetime import datetime
 from control2 import *
 
@@ -33,19 +33,18 @@ def clientUID(url, username, delKey=False):
     uuid = None
 
     #get urlHost:  example: url='https://test.ofx.com/my/script'
-    prefix, path = urllib2.splittype(url)
     #path='//test.ofx.com/my/script';  Host= 'test.ofx.com' ; Selector= '/my/script'
-    urlHost, urlSelector = urllib2.splithost(path)
-    key = md5.md5(urlHost+username).digest()
+    urlHost = urllib.parse.urlparse(url).netloc
+    key = hashlib.md5(str(urlHost+username).encode('utf-8')).digest()
 
-    if glob.glob(dfile) <> []:
+    if glob.glob(dfile) != []:
         #lookup
         f = open(dfile,'rb')
         dTable = pickle.load(f)
         uuid = dTable.get(key, None)
         f.close()
 
-    if uuid==None or (delKey and uuid<>None):
+    if uuid==None or (delKey and uuid!=None):
         f = open(dfile,'wb')
         if delKey:
             #remove existing key
@@ -65,7 +64,7 @@ def get_int(prompt):
     prompt = prompt.rstrip() + ' '
     done = False
     while not done:
-        istr = raw_input(prompt)
+        istr = input(prompt)
         if istr == '':
             a = 0
             done = True
@@ -74,7 +73,7 @@ def get_int(prompt):
                 a=int(istr)
                 done = True
             except:
-                print 'Please enter a valid integer'
+                print('Please enter a valid integer')
     return a
 
 def FieldVal(dic, fieldname):
@@ -86,55 +85,72 @@ def FieldVal(dic, fieldname):
         val = dic[fieldname]
     return val
 
+def getDes_pw(prompt = 'Password'):
+    #ask for password and force to an 8-byte size, consistent with DES key requirements
+    pw=' '
+    while len(pw) < 3 or (' ' in pw):
+        pw = getpass.getpass(prompt+': ')
+        pw = pw.rstrip()
+        if len(pw) < 3:
+            print('Invalid password.  Minimum length of 3-chars')
+        if ' ' in pw:
+            print('Invalid password.  No spaces allowed')
+
+    #conform to an 8-byte field
+    while len(pw) < 8:
+        pw=pw+pw
+
+    return pw[0:8]
+
 def decrypt_pw(pwkey):
     #validate password if pwkey isn't null
-    if pwkey <> '':
-        #file encrypted... need password
-        pw = pyDes.getDESpw()   #ask for password
-        k = pyDes.des(pw)       #create encryption object using key
-        pws = k.decrypt(pwkey,' ')  #decrypt
-        if pws <> pw:               #comp to saved password
-            print 'Invalid password.  Exiting.'
-            sys.exit()
-        else:
-            #decrypt the encrypted fields
-            pwkey = pws
-    return pwkey
+    if not len(pwkey): return
+
+    #file encrypted... need password
+    pw = getDes_pw()        #ask for password
+    k = pyDes.des(pw)       #create encryption object using key
+    pws = k.decrypt(pwkey,' ')  #decrypt
+
+    if pws != pw.encode('utf-8'):   #comp to saved password
+        print('Invalid password.  Exiting.')
+        sys.exit()
+
+    return pws
 
 def acctEncrypt(AcctArray, pwkey):
     #encrypt accounts
-    d = pyDes.des(pwkey)
+    k = pyDes.des(pwkey)
     for acct in AcctArray:
-       acct[1] = d.encrypt(acct[1],' ')
-       acct[3] = d.encrypt(acct[3],' ')
-       acct[4] = d.encrypt(acct[4],' ')
+       acct[1] = k.encrypt(acct[1],' ')
+       acct[3] = k.encrypt(acct[3],' ')
+       acct[4] = k.encrypt(acct[4],' ')
     return AcctArray
 
 def acctDecrypt(AcctArray, pwkey):
     #decrypt accounts
-    d = pyDes.des(pwkey)
+    k = pyDes.des(pwkey)
     for acct in AcctArray:
-       acct[1] = d.decrypt(acct[1],' ')
-       acct[3] = d.decrypt(acct[3],' ')
-       acct[4] = d.decrypt(acct[4],' ')
+       acct[1] = k.decrypt(acct[1],' ').decode('utf-8')
+       acct[3] = k.decrypt(acct[3],' ').decode('utf-8')
+       acct[4] = k.decrypt(acct[4],' ').decode('utf-8')
     return AcctArray
 
 def get_cfg():
     #read in user configuration
 
-    c_AcctArray = []        #AcctArray = [['SiteName', 'Account#', 'AcctType', 'UserName', 'PassWord'], ...]
-    c_pwkey=''              #default = no encryption
-    c_getquotes = False     #default = no quotes
-    if glob.glob(cfgFile) <> []:
+    pwkey=''              #default = no encryption
+    getquotes = False     #default = no quotes
+    AcctArray = []        #AcctArray = [['SiteName', 'Account#', 'AcctType', 'UserName', 'PassWord'], ...]
+    if glob.glob(cfgFile) != []:
         cfg = open(cfgFile,'rb')
         try:
-            c_pwkey = pickle.load(cfg)            #encrypted pw key
-            c_getquotes = pickle.load(cfg)        #get stock/fund quotes?
-            c_AcctArray = pickle.load(cfg)        #
+            pwkey = pickle.load(cfg)            #encrypted pw key
+            getquotes = pickle.load(cfg)        #get stock/fund quotes?
+            AcctArray = pickle.load(cfg)        #
         except:
             pass    #nothing to do... must not be any data in the file
         cfg.close()
-    return c_pwkey, c_getquotes, c_AcctArray
+    return pwkey, getquotes, AcctArray
 
 def QuoteHTMwriter(qList):
     # Write quotes.htm containing quote data contained in quote list (qList)
@@ -149,7 +165,7 @@ def QuoteHTMwriter(qList):
     fullpath = '"' + os.path.realpath(filename) + '"'   #encapsulate spaces
 
     f = open(filename,"w")
-    print "Writing", filename
+    print("Writing", filename)
 
     # Write HEADER
     _QHTMheader(f)
@@ -308,7 +324,7 @@ NEWFILEUID:NONE
 def OfxField(tag,value, ofxver='102'):
     field = ''
     #skip empty values
-    if tag <> '' and value <> '':
+    if tag != '' and value != '':
         field = '<'+tag+'>'+value
         #terminate as xml if ofx 2.x
         if ofxver[0]=='2': field = field + '</'+tag+'>'
@@ -436,5 +452,5 @@ def combineOfx(ofxList):
     f=open(cfile,'w')
     f.write(combOfx)
     f.close()
-    print "Combined OFX created: " + cfile
+    print("Combined OFX created: " + cfile)
     return cfile

@@ -29,7 +29,7 @@ AboutName     = 'Robert'
 #xfrdir = temp directory for statement downloads.  Platform independent
 xfrdir    = os.path.join(os.path.curdir,"xfr") + os.sep
 importdir = os.path.join(os.path.curdir,"import") + os.sep
-if Debug: print "XFRDIR = " + xfrdir
+if Debug: print("XFRDIR = " + xfrdir)
 cfgFile  = 'ofx_config.cfg'    #user account settings (can be encrypted)
 
 DefaultAppID  = 'QWIN'

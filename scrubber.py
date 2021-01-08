@@ -66,7 +66,7 @@ stat = False    #global used between re lambda subs to track status
 
 def scrubPrint(line):
     if not userdat.quietScrub:
-        print "  +" + line
+        print("  +" + line)
 
 def scrub(filename, site):
     #filename = string
@@ -77,7 +77,7 @@ def scrub(filename, site):
     accType = FieldVal(site, 'CAPS')[1]
     f = open(filename,'r')
     ofx = f.read()  #as-found ofx message
-    #print ofx
+    #print(ofx)
 
     #NOTE:  Discover Card and Bank use the same server @ discovercard.com
     if 'DISCOVERCARD' in siteURL: ofx= _scrubDiscover(ofx, accType)
@@ -86,7 +86,7 @@ def scrub(filename, site):
 
     ofx= _scrubTime(ofx)     #fix 000000 and NULL datetime stamps
 
-    if dtHrs <> 0: ofx = _scrubShiftTime(ofx, dtHrs)   #note: always call *after* _scrubTime()
+    if dtHrs != 0: ofx = _scrubShiftTime(ofx, dtHrs)   #note: always call *after* _scrubTime()
 
     ofx= _scrubDTSTART(ofx)  #fix missing <DTEND> fields
 
@@ -263,7 +263,7 @@ def _scrubDTSTART(ofx):
 
         #regex p captures everything from <DTSTART> up to the next <tag> or white space into group(1)
         p = re.compile(r'(<DTSTART>[^<\s]+)',re.IGNORECASE)
-        if Debug: print "DTSTART: findall()=", p.findall(ofx_final)
+        if Debug: print("DTSTART: findall()=", p.findall(ofx_final))
         #replace group1 with (group1 + <DTEND> + datetime)
         ofx_final = p.sub(r'\1<DTEND>'+nowstr, ofx_final)
 
@@ -291,7 +291,7 @@ def _scrubShiftTime_r1(r,h):
     fieldtag = r.group(1)       #date field tag (e.g., <DTASOF>)
     DT = r.group(2).strip(' ')  #date+time
 
-    if Debug: print "fieldtag=", fieldtag, "| DT=" + DT
+    if Debug: print("fieldtag=", fieldtag, "| DT=" + DT)
 
     # Full date/time format example:  20100730120000.000[-4:EDT]
     #separate into date/time + timezone
