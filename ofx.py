@@ -70,6 +70,7 @@ import time, os, sys, http.client, urllib.request, urllib.error, urllib.parse, g
 import getpass, scrubber, site_cfg, uuid
 from control2 import *
 from rlib1 import *
+import ssl
 
 if Debug:
     import traceback
@@ -239,7 +240,13 @@ class OFXClient:
         response=False
         try:
             errmsg= "** An ERROR occurred attempting HTTPS connection to"
-            h = http.client.HTTPSConnection(self.urlHost, timeout=5)
+
+            ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+            ctx.set_ciphers('ALL')
+            #ctx.options &= ~ssl.OP_NO_SSLv3
+            #ctx.options += ssl.OP_NO_TLSv1_3
+
+            h = http.client.HTTPSConnection(self.urlHost, timeout=5, context=ctx)
             if Debug: h.set_debuglevel(1)
 
             #proxy config for fiddler tests
