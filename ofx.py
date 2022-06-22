@@ -66,7 +66,20 @@
 # 19Nov2019*rlc
 #   - Add site delay option
 
-import time, os, sys, http.client, urllib.request, urllib.error, urllib.parse, glob, random, re
+# 15Feb2021*rlc
+#   - add support for site-specific skipZeroTrans option
+#   - add support for the following site parameters: dtacctup, useragent, clientuid
+
+# 20Feb2021*rlc
+#   - changed http requests to use the Requests pkg rather than httplib
+#     unresolved issues were happening for USAA, which uses an Incapsula gateway,
+#     and requests (pkg) correctly negotiated the connection, where httplib didn't.
+
+#18Aug2021*rlc
+#   - add Accept: application/x-ofx to request header.  Now required by Citi.
+
+import time, os, sys, urllib.parse, glob, random, re
+import requests, collections
 import getpass, scrubber, site_cfg, uuid
 from control2 import *
 from rlib1 import *
@@ -90,6 +103,12 @@ class OFXClient:
         self.site = site
         self.ofxver = FieldVal(site,"ofxver")
         self.url = FieldVal(self.site,"url")
+        self.dtacctup = FieldVal(self.site,"dtacctup") or '19700101'
+        self.clientuid =  FieldVal(self.site,"clientuid")  #<optional> user-entered clientUID for site
+        #if the user hasn't defined a clientUID and ofxVer>102, auto-create and save
+        if self.clientuid is None and int(self.ofxver) > 102:
+            self.clientuid = clientUID(self.url, self.user)
+        self.useragent  =  FieldVal(self.site,"useragent")
 
         #example: url='https://test.ofx.com/my/script'
         #path='//test.ofx.com/my/script';  Host= 'test.ofx.com' ; Selector= '/my/script'
@@ -112,13 +131,14 @@ class OFXClient:
         clientuid=''
         if int(ver) > 102:
             #include clientuid if version=103+, otherwise the server may reject the request
-            clientuid = OfxField("CLIENTUID", clientUID(self.url, self.user), ver)
+            clientuid = OfxField("CLIENTUID", self.clientuid, ver)
 
         fidata = [OfxField("ORG",FieldVal(site,"fiorg"), ver)]
         fidata += [OfxField("FID",FieldVal(site,"fid"), ver)]
         rtn = OfxTag("SIGNONMSGSRQV1",
                 OfxTag("SONRQ",
-                OfxField("DTCLIENT",OfxDate(), ver),
+                #OfxField("DTCLIENT",dateTimeStr(utc=True, tz=True), ver),
+                OfxField("DTCLIENT",dateTimeStr(), ver),
                 OfxField("USERID",self.user, ver),
                 OfxField("USERPASS",self.password, ver),
                 OfxField("LANGUAGE","ENG", ver),
@@ -129,8 +149,8 @@ class OFXClient:
                 ))
         return rtn
 
-    def _acctreq(self, dtstart):
-        req = OfxTag("ACCTINFORQ",OfxField("DTACCTUP",dtstart))
+    def _acctreq(self):
+        req = OfxTag("ACCTINFORQ",OfxField("DTACCTUP",self.dtacctup))
         return self._message("SIGNUP","ACCTINFO",req)
 
     def _bareq(self, bankid, acctid, dtstart, acct_type):
@@ -190,7 +210,7 @@ class OFXClient:
             rtn = rtn.replace('%ofxver%', self.ofxver)
 
         else:
-            rtn = join("\r\n",[ "OFXHEADER:100",
+            rtn = join('\r\n',["OFXHEADER:100",
                            "DATA:OFXSGML",
                            "VERSION:" + self.ofxver,
                            "SECURITY:NONE",
@@ -200,12 +220,11 @@ class OFXClient:
                            "OLDFILEUID:NONE",
                            "NEWFILEUID:NONE",
                            ""])
-
         return rtn
 
     def baQuery(self, bankid, acctid, dtstart, acct_type):
         #Bank account statement request
-        return join("\r\n",
+        return join('\r\n',
                     [self._header(),
                      OfxTag("OFX",
                           self._signOn(),
@@ -216,84 +235,69 @@ class OFXClient:
 
     def ccQuery(self, acctid, dtstart):
         #CC Statement request
-        return join("\r\n",[self._header(),
+        return join('\r\n',[self._header(),
                     OfxTag("OFX",
                     self._signOn(),
                     self._ccreq(acctid, dtstart))])
 
-    def acctQuery(self,dtstart='19700101000000'):
-        return join("\r\n",[self._header(),
+    def acctQuery(self):
+        return join('\r\n',[self._header(),
                     OfxTag("OFX",
                     self._signOn(),
-                    self._acctreq(dtstart))])
+                    self._acctreq())])
 
     def invstQuery(self, brokerid, acctid, dtstart):
-        return join("\r\n",[self._header(),
+        return join('\r\n',[self._header(),
                     OfxTag("OFX",
                     self._signOn(),
                     self._invstreq(brokerid, acctid, dtstart))])
 
     def doQuery(self,query,name):
-        # urllib doesn't honor user Content-type, use urllib2
-
-        response=False
+        response=None
         try:
             errmsg= "** An ERROR occurred attempting HTTPS connection to"
-            h = http.client.HTTPSConnection(self.urlHost, timeout=5)
-            if Debug: h.set_debuglevel(1)
+            s = requests.Session()
 
-            #proxy config for fiddler tests
-            #h = httplib.HTTPSConnection('localhost:8888', timeout=5)
-            #h.set_tunnel(self.urlHost)
+            #fiddler env vars config for debug.  HTTPSPROXY auto-recognized by Requests, but not PYTHONHTTPSVERIFY
+            #   set PYTHONHTTPSVERIFY=0
+            #   set HTTPSPROXY="https://127.0.0.1:8888"
+            httpsVerify = False if os.environ.get('PYTHONHTTPSVERIFY','')=='0' else True
 
-            errmsg= "** An ERROR occurred sending POST request to"
+            header = collections.OrderedDict()
+            header['Content-Type'] = 'application/x-ofx'
+            header['Host']         = self.urlHost
+            header['Content-Length'] = str(len(query))  #auto-created by requests
+            header['Connection']   = 'Keep-Alive'
+            header['Accept'] = 'application/x-ofx'
+            if self.useragent is None:                  #default
+                header['User-Agent'] = 'InetClntApp/3.0'
+            elif self.useragent.lower()!='none':
+                header['User-Agent'] = self.useragent
+            s.headers = header
+            if Debug: print('Header:', s.headers, '\n')
 
-            #try without a user-agent or cookie, and retry if the first one fails
-            #if both fail, revert to V1 request method
+            for i in [0,1]:
+                #retry for sites that require session cookie(s)
+                errmsg= "** An ERROR occurred sending POST request to"
+                response = s.post(self.url, data=query, verify=httpsVerify)
 
-            response = None
+                respDat = response.text
+                if Debug:
+                    print("\nSENT:\n----------\n")
+                    print('HEADER:', response.request.headers)
+                    print('BODY:', response.request.body)
+                    print("\nRECEIVED:\n----------\n")
+                    print('HEADER:', response.headers)
+                    if '<html>' not in respDat:
+                        #suppress html responses here, since they're *verbose*
+                        print('BODY:', respDat)
+                if validOFX(respDat)=='': break
 
-            for i in [0,1,2]:
-                if i in [0,1]:
-                    #V2 request supports latest Discover
-                    h.putrequest('POST', self.urlSelector, skip_host=1, skip_accept_encoding=1)
-
-                    h.putheader('Content-Type', 'application/x-ofx')
-                    h.putheader('Host', self.urlHost)
-                    h.putheader('Content-Length', len(query))
-                    h.putheader('Connection', 'Keep-Alive')
-
-                    #optional parameters are appended only when failure on first pass
-                    #   + cookies are added if provided by server on first pass
-                    #   + user-agent is always added on second pass
-                    if i==1:
-                        h.putheader('User-Agent', 'PocketSense')
-                        #this is our second pass, so add session cookies if found in first response
-                        cookie = response.getheader('set-cookie')   #server cookie(s) provided in last response
-                        if cookie != None:
-                            if Debug: print('<Response Cookies>', cookie)
-                            h.putheader('cookie', cookie)
-                    h.endheaders(query.encode('utf-8'))
-
-                else:
-                   #i=2: try V1 request (deprecated).  Shouldn't get here... keeping "just in case"
-                   h.request('POST', self.urlSelector, query,
-                             {"Content-type": "application/x-ofx",
-                              "Accept": "application/x-ofx"})
-
-                errmsg= "** An ERROR occurred retrieving POST response from"
-                #allow up to 30 secs for the server response (if it takes longer, something's wrong)
-                h.sock.settimeout(30)
-                response = h.getresponse()
-                respDat  = response.read().decode('utf-8')
-
+            if validOFX(respDat)=='':
                 #if this is a OFX 2.x response, replace the header w/ OFX 1.x
                 if self.ofxver[0] == '2':
                     respDat = re.sub(r'<\?.*\?>', '', respDat)      #remove xml header lines like <? content...content ?>
                     respDat = OfxSGMLHeader() + respDat.lstrip()
-
-                #did we get a valid response?  if not, try again w/ different request header
-                if validOFX(respDat)=='': break
 
             f = open(name,"w")
             f.write(respDat)
@@ -301,16 +305,15 @@ class OFXClient:
 
         except Exception as e:
             self.status = False
-            print(errmsg, self.urlHost)
+            print(errmsg, self.url)
             print("   Exception type  :", type(e))
             print("   Exception val   :", e)
 
             if response:
-                print("   HTTPS ResponseCode  :", response.status)
+                print("   HTTPS ResponseCode  :", response.status_code)
                 print("   HTTPS ResponseReason:", response.reason)
 
-        if h: h.close()
-
+        if response: response.close()
 #------------------------------------------------------------------------------
 
 def getOFX(account, interval):
@@ -365,16 +368,20 @@ def getOFX(account, interval):
                 orgID = FieldVal(site, 'BROKERID')
                 if orgID == '': orgID = FieldVal(site, 'FIORG')
                 if orgID == '':
-                    msg = '** Error: Site', sitename, 'does not have a (REQUIRED) BrokerID or FIORG value defined.'
+                    msg = '** Error: Site', sitename, 'missing (REQUIRED) BrokerID or FIORG value(s).'
                     raise Exception(msg)
                 query = client.invstQuery(orgID, acct_num, dtstart)
 
             elif "BASTMT" in caps:
                 bankid = FieldVal(site, "BANKID")
                 if bankid == '':
-                    msg='** Error: Site', sitename, 'does not have a (REQUIRED) BANKID value defined.'
+                    msg='** Error: Site', sitename, 'missing (REQUIRED) BANKID value.'
                     raise Exception(msg)
                 query = client.baQuery(bankid, acct_num, dtstart, acct_type)
+
+            else:
+                msg='** Error: Site', sitename, 'missing (REQUIRED) AcctType value.'
+                raise Exception(msg)
 
         SendRequest = True
         if Debug:

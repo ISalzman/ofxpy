@@ -34,7 +34,8 @@
 #   - Add an "account balance" data field of zero (balance=0) for the overall statement.
 # 10-Jan-2010*rlc
 #   - Write quote summary to xfrdir\quotes.htm
-#   - Moved _header, OfxField, OfxTag, _genuid, and OfxDate functios to   Removed "\r" from linebreaks.
+#   - Moved _header, OfxField, OfxTag, _genuid, and OfxDate functions to rLib1
+#   - Removed "\r" from linebreaks.
 #       Will reuse when combining statements
 # 18-Feb-2011*rlc:
 #   - Use ticker symbol when stock name from Yahoo is null
@@ -72,6 +73,8 @@
 #   -Removed yahooScrape option
 # 24Mar2018*rlc
 #   -Use longName when available for Yahoo quotes.  Mutual fund *family* name is sometimes given as shortName (see vhcox as example)
+# 20Feb2021*rlc
+#   -Minor edits while implementing Requests pkg
 
 import os, sys, time, urllib.request, socket, shlex, re, csv, uuid, json
 import site_cfg
@@ -301,7 +304,7 @@ class OfxWriter:
 
     def get_dtasof(self):
         #15-Feb-2011: Use the latest quote date/time for the statement
-        today = datetime.today()
+        today = datetime.now()
         dtasof   = today.strftime("%Y%m%d")+'120000'    #default to today @ noon
         lastdate = datetime(1,1,1)                      #but compare actual dates to long, long ago...
         for ticker in self.stockList + self.mfList:
@@ -321,7 +324,7 @@ class OfxWriter:
                              OfxField("SEVERITY", "INFO"),
                              OfxField("MESSAGE","Successful Sign On")
                          ),
-                         OfxField("DTSERVER", OfxDate()),
+                         OfxField("DTSERVER", dateTimeStr()),
                          OfxField("LANGUAGE", "ENG"),
                          OfxField("DTPROFUP", "20010918083000"),
                          OfxTag("FI", OfxField("ORG", "PocketSense"))
@@ -483,14 +486,14 @@ def getQuotes():
         if not os.path.exists(xfrdir):
             os.mkdir(xfrdir)
 
-        ofxFile1 = xfrdir + "quotes" + OfxDate() + str(random.randrange(1e5,1e6)) + ".ofx"
+        ofxFile1 = xfrdir + "quotes" + dateTimeStr() + str(random.randrange(1e5,1e6)) + ".ofx"
         writer = OfxWriter(currency, account, 0, stockList, mfList)
         writer.writeFile(ofxFile1)
 
         if userdat.forceQuotes:
            #generate a second file with non-zero shares.  Getdata and Setup use this file
            #to force quote reconciliation in Money, by sending ofxFile2, and then ofxFile1
-           ofxFile2 = xfrdir + "quotes" + OfxDate() + str(random.randrange(1e5,1e6)) + ".ofx"
+           ofxFile2 = xfrdir + "quotes" + dateTimeStr() + str(random.randrange(1e5,1e6)) + ".ofx"
            writer = OfxWriter(currency, account, 0.001, stockList, mfList)
            writer.writeFile(ofxFile2)
 

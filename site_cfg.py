@@ -41,6 +41,13 @@
 #   -remove enableYahooScrape option
 # 06Dec2017*rlc
 #   -add GoogleURL as sites.dat option
+# 07Mar2020*rlc
+#   -disable Google Finance by default, and disable setting
+# 15Feb2021*rlc
+#   -add support for site-specific skipZeroTrans option
+#   -add support for the following site parameters: dtacctup, useragent, clientuid, skipzerotrans
+# 10Mar2021*rlc
+#   - add support for promptStart and promptEnd parameters in sites.dat
 
 import os, glob, re, random
 from rlib1 import *
@@ -84,7 +91,7 @@ class site_cfg:
         self.defaultInterval = 7
         self.promptInterval=False
         self.YahooURL = 'http://query1.finance.yahoo.com/v7/finance/quote'
-        self.GoogleURL = 'http://finance.google.com/finance'
+        self.GoogleURL = 'http://www.google.com/finance/quote'
         self.datfile= 'sites.dat'
         self.bakfile= 'sites.bak'
         self.tmplfile = 'sites.template'
@@ -99,9 +106,11 @@ class site_cfg:
         self.forceQuotes = False
         self.quoteAccount = '0123456789'
         self.enableYahooFinance = True
-        self.enableGoogleFinance = True
+        self.enableGoogleFinance = False
         self.skipZeroTransactions = False
         self.skipFailedLogon = True
+        self.promptStart = True
+        self.promptEnd   = False
 
         if glob.glob(self.datfile) == []:
             if glob.glob(self.bakfile) != []:
@@ -151,6 +160,10 @@ class site_cfg:
                 mininterval = 0
                 timeOffset = 0.0
                 delay = 0.0
+                dtacctup = None
+                skipzerotrans = None
+                useragent = None
+                clientuid = None
 
             if '<SITE>' in lineU:
                 parsing = True
@@ -170,7 +183,11 @@ class site_cfg:
                              'APPVER': appver,
                         'MININTERVAL': mininterval,
                          'TIMEOFFSET': timeOffset,
-                              'DELAY': delay}
+                              'DELAY': delay,
+                      'SKIPZEROTRANS': skipzerotrans,
+                           'DTACCTUP': dtacctup,
+                          'USERAGENT': useragent,
+                          'CLIENTUID': clientuid}
                         }
                     self.sites.update(X)
 
@@ -193,6 +210,10 @@ class site_cfg:
                     elif field == 'MININTERVAL': mininterval = int(value)
                     elif field == 'TIMEOFFSET': timeOffset = float(value)
                     elif field == 'DELAY': delay = float(value)
+                    elif field == 'SKIPZEROTRANS': skipzerotrans = True if 'Y' in value else False if 'N' in value else None
+                    elif field == 'DTACCTUP': dtacctup = value
+                    elif field == 'USERAGENT': useragent = value
+                    elif field == 'CLIENTUID': clientuid = value
 
                 else:
                     #look for individual parameters while we're NOT parsing site info
@@ -217,8 +238,9 @@ class site_cfg:
                     if field == 'ENABLEYAHOOFINANCE':
                         self.enableYahooFinance = (value[:1].upper() == 'Y')
 
-                    if field == 'ENABLEGOOGLEFINANCE':
-                        self.enableGoogleFinance = (value[:1].upper() == 'Y')
+                    #Google Finance is no longer supported
+                    #if field == 'ENABLEGOOGLEFINANCE':
+                    #    self.enableGoogleFinance = (value[:1].upper() == 'Y')
 
                     if field == 'YAHOOURL':
                         self.YahooURL = value
@@ -249,6 +271,12 @@ class site_cfg:
 
                     if field == 'SKIPFAILEDLOGON':
                         self.skipFailedLogon = (value[:1].upper() == 'Y')
+
+                    if field == 'PROMPTSTART':
+                        self.promptStart = (value[:1].upper() == 'Y')
+
+                    if field == 'PROMPTEND':
+                        self.promptEnd = (value[:1].upper() == 'Y')
 
            #end_for line
 

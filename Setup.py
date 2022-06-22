@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # setup.py
 # http://sites.google.com/site/pocketsense/
 # setup account info
@@ -29,6 +31,9 @@
 
 #16Sep2019*rlc
 #   - create ./import folder during setup
+
+#26Apr2020*rlc
+#   - minor bug fix (print statement)
 
 import os, sys, glob, re, pickle, shutil, time
 import pyDes, ofx, quotes, site_cfg, filecmp
@@ -67,7 +72,11 @@ def list_accounts(showConnectKeys=False):
         if sitename in Sites:
             type = rlib1.FieldVal(Sites[sitename], 'caps')[1]  #default to showing the acctType from sites.dat
             url = rlib1.FieldVal(Sites[sitename],'url')
-            clientUID = rlib1.clientUID(url, user)
+            ofxVer = rlib1.FieldVal(Sites[sitename], 'ofxver')
+            #clientuid can be defined for the site (sites.dat), or for the account (via setup)
+            clientUID = rlib1.FieldVal(Sites[sitename], 'clientuid')
+            if clientUID is None and rlib1.int2(ofxVer) > 102:
+                clientUID = rlib1.clientUID(url, user)
             if   type == 'INVSTMT': type = 'INVESTMENT'
             elif type == 'CCSTMT':  type = 'CREDIT CARD'
             print('{0:4}{1:18}{2:24}{3:14}{4}'.format(str(i)+'.',sitename,account,type,user))
@@ -271,8 +280,8 @@ if __name__=="__main__":
         #sort accounts by site+username+account
         AcctArray = sorted(AcctArray, key = lambda x: (x[0], x[3], x[1]))
         if len(pwkey):
-            menu_4 = '4. Change Master Password'
-            menu_5 = '5. Remove Password Encryption'
+            menu_4 = '4. Change Password'
+            menu_5 = '5. Remove Encryption'
         else:
             menu_4 = '4. Encrypt account settings'
             menu_5 = ''
@@ -334,12 +343,12 @@ if __name__=="__main__":
                         if acct[0]==sitename and acct[3]==user: found=True
                     if not found:
                         rlib1.clientUID(url, user, delKey=True)
-                        if action=='R': print('Connection settings reset for %s @ %s' % (user, urlHost))
+                        if action=='R': print('Connection settings reset for %s @ %s' % (user, url))
 
         elif menu_option == 4:
             #change security settings
             while True:
-                pwkey1 = rlib1.getDes_pw('Enter NEW Master password')
+                pwkey1 = rlib1.getDes_pw('Enter NEW password')
                 pwkey2 = rlib1.getDes_pw('ReEnter password')
 
                 if pwkey2 == pwkey1:
@@ -400,6 +409,7 @@ if __name__=="__main__":
 
     if len(pwkey):
         #encrypt the data
+        #encrypt the accounts
         rlib1.acctEncrypt(AcctArray,pwkey)
         #encrypt the passkey
         k = pyDes.des(pwkey)
@@ -407,7 +417,7 @@ if __name__=="__main__":
 
     #write the data
     f = open(cfgFile, 'wb')
-    pickle.dump(pwkey, f)      #encrypted key (pw)
+    pickle.dump(pwkey, f)        #encrypted key (pw)
     pickle.dump(c_getquotes, f)  #get stock quotes?
     pickle.dump(AcctArray, f)    #account info
     f.close()
