@@ -22,7 +22,7 @@ Debug = False             #debug mode = true only when testing
 #Debug = True
 
 AboutTitle    = 'PocketSense OFX Download Python Scripts'
-AboutVersion  = '04-Jan-2020'
+AboutVersion  = '2021-Sep-15 DEV'
 AboutSource   = 'http://sites.google.com/site/pocketsense'
 AboutName     = 'Robert'
 
@@ -33,4 +33,4 @@ if Debug: print("XFRDIR = " + xfrdir)
 cfgFile  = 'ofx_config.cfg'    #user account settings (can be encrypted)
 
 DefaultAppID  = 'QWIN'
-DefaultAppVer = '2600'
+DefaultAppVer = '2700'

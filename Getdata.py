@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # GetData.py
 # http://sites.google.com/site/pocketsense/
 # retrieve statements, stock and fund data
@@ -85,12 +87,14 @@ def getSite(ofx):
 if __name__=="__main__":
 
     stat1 = True    #overall status flag across all operations (true == no errors getting data)
+    quotesExist = False
     print(AboutTitle + ", Ver: " + AboutVersion + "\n")
 
     if Debug: print("***Running in DEBUG mode.  See Control2.py to disable***\n")
-    doit = input("Download transactions? (Y/N/I=Interactive) [Y] ").upper()
-    if len(doit) > 1: doit = doit[:1]    #keep first letter
-    if doit == '': doit = 'Y'
+    doit='Y'
+    if userdat.promptStart:
+        doit = input("Download transactions? (Y/N/I=Interactive) [Y] ").upper()
+        doit = 'Y' if doit=='' else doit[:1]  #first char
     if doit in "YI":
         #get download interval, if promptInterval=Yes in sites.dat
         interval = userdat.defaultInterval
@@ -164,19 +168,22 @@ if __name__=="__main__":
                         print("Importing %s" % fname)
                         if 'NEWFILEUID:PSIMPORT' not in dat[:200]:
                             #only scrub if it hasn't already been imported (and hence, scrubbed)
-                            site = getSite(dat)
-                            scrubber.scrub(f, site)
+                            try:
+                                site = getSite(dat)
+                                scrubber.scrub(f, site)
+                            except:
+                                print('No site defined for %s: skipping scrubber' % fname)
 
                         #set NEWFILEUID:PSIMPORT to flag the file as having already been imported/scrubbed
                         #don't want to accidentally scrub twice
-                        with open(f) as ifile:
+                        with open(f, 'rU') as ifile:
                             ofx = ifile.read()
                         p = re.compile(r'NEWFILEUID:.*')
                         ofx2 = p.sub('NEWFILEUID:PSIMPORT', ofx)
                         if ofx2:
                             with open(f, 'w') as ofile:
                                 ofile.write(ofx2)
-                        #preserve origina file type but save w/ ofx extension
+                        #preserve original file type but save w/ ofx extension
                         outname = xfrdir+fname + ('' if bext=='.ofx' else '.ofx')
                         os.rename(f, outname)
                         ofxList.append(['import file', '', outname])
@@ -188,6 +195,7 @@ if __name__=="__main__":
                 stat1 = stat1 and status
                 if glob.glob(quoteFile1) != []:
                     ofxList.append(z)
+                else: quotesExist=False
                 print("")
 
                 # display the HTML file after download if requested to always do so
@@ -202,8 +210,7 @@ if __name__=="__main__":
 
             if doit == 'I' or Debug:
                 gogo = input('Upload online data to Money? (Y/N/V=Verify) [Y] ').upper()
-                if len(gogo) > 1: gogo = gogo[:1]    #keep first letter
-                if gogo == '': gogo = 'Y'
+                gogo = 'Y' if gogo=='' else gogo[:1]    #first letter
 
             if gogo in 'YV':
                 if glob.glob(quoteFile2) != []:
@@ -228,9 +235,12 @@ if __name__=="__main__":
                         time.sleep(0.5)   #slight delay, to force load order in Money
 
             #ask to show quotes.htm if defined in sites.dat
-            if userdat.askquotehtm:
+            if userdat.askquotehtm and quotesExist:
                 ask = input('Open <Quotes.htm> in the default browser (y/n)?').upper()
                 if ask=='Y': os.startfile(htmFileName)  #don't wait for browser close
+
+            if userdat.promptEnd:
+                input('\n\nPress <Enter> to continue...')
 
         else:
             if len(AcctArray)>0 or (getquotes and len(userdat.stocks)>0):

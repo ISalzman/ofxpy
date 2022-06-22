@@ -55,7 +55,18 @@
 #27-Jul-2018*dbc
 #   - Add TRowePrice scrub function to fix paid-out dividends/cap gains that are marked as reinvested
 
-import os, sys, re
+#14-Feb-2021*cgn
+#   - add REFNUM and SIC fields to general scrub routine
+#   - add _scrubHeader() to remove spaces after colon if present
+
+#14-Feb-2021*rlc
+#   - add support for site-specific skipZeroTrans option.
+#   - add "replace null or missing <TRNTYPE> with 'OTHER'" to _scrubGenera()
+
+#27-Mar-2021*cgn
+#  - open ofx file w/ 'U' qualifier.  Forces newlines to match Windows convention (e.g., \n = <CR><LF>)
+
+import os, sys, re, glob
 import site_cfg
 from datetime import datetime, timedelta
 from control2 import *
@@ -75,16 +86,14 @@ def scrub(filename, site):
     siteURL = FieldVal(site, 'url').upper()
     dtHrs = FieldVal(site, 'timeOffset')
     accType = FieldVal(site, 'CAPS')[1]
-    f = open(filename,'r')
-    ofx = f.read()  #as-found ofx message
-    #print(ofx)
+    site_skip_zt = FieldVal(site, 'skipzerotrans')
+    with open(filename,'rU') as f:
+        ofx = f.read()  #as-found ofx message
+        #print(ofx)
 
-    #NOTE:  Discover Card and Bank use the same server @ discovercard.com
-    if 'DISCOVERCARD' in siteURL: ofx= _scrubDiscover(ofx, accType)
+    ofx = _scrubHeader(ofx) #Remove illegal spaces in OFX header lines
 
-    if 'TROWEPRICE.COM' in siteURL: ofx = _scrubTRowePrice(ofx)
-
-    ofx= _scrubTime(ofx)     #fix 000000 and NULL datetime stamps
+    ofx= _scrubTime(ofx)    #fix 000000 and NULL datetime stamps
 
     if dtHrs != 0: ofx = _scrubShiftTime(ofx, dtHrs)   #note: always call *after* _scrubTime()
 
@@ -96,124 +105,30 @@ def scrub(filename, site):
         ofx= _scrubREINVESTsign(ofx)
 
     #remove $0.00 transactions
-    if userdat.skipZeroTransactions: ofx = _scrubRemoveZeroTrans(ofx)
+    if (userdat.skipZeroTransactions or site_skip_zt) and not site_skip_zt==False:
+        ofx = _scrubRemoveZeroTrans(ofx)
 
     #perform general ofx cleanup
     ofx = _scrubGeneral(ofx)
 
-    #close the input file
-    f.close()
+    #run custom srub routines
+    #any scrub_*.py file found in the current folder will be processed
+    for scrubFile in glob.glob('scrub_*.py'):
+        scrublet = scrubFile.strip('.py')
+        try:
+            s = __import__(scrublet)
+            ofx2 = s.scrub(ofx, siteURL, accType)
+            if validOFX(ofx2) == '':
+                ofx=ofx2
+            else:
+                scrubPrint(scrubFile + ' ERROR: Custom scrub_*.py files must return a valid OFX message.')
+        except Exception as e:
+            scrubPrint('An error occurred when processing scrub module: ' + scrublet)
+            print(e)
 
     #write the new version to the same file
-    f = open(filename, 'w')
-    f.write(ofx)
-    f.close
-
-#-----------------------------------------------------------------------------
-# OFX.DISCOVERCARD.COM
-#   1.  Discover OFX files will contain transaction identifiers w/ the following format:
-#           FITIDYYYYMMDDamt#####, where
-#                FITID  = string literal
-#                YYYY   = year (numeric)
-#                MM     = month (numeric)
-#                DD     = day (numeric)
-#                amt    = dollar amount of the transaction, including a hypen for negative entries (e.g., -24.95)
-#                #####  = 5 char value
-
-#   2.  The 5-digit serial number can change each time you connect to the server,
-#          meaning that the same transaction can download with different FITID numbers.
-#       That's not good, since Money requires a unique FITID value for each valid transaction.
-#       Varying serial numbers result in duplicate transactions!
-
-#   3.  We'll replace the 5-digit serial number with one of our own.
-#       The default will be 0 for every transaction,
-#          and we'll increment by one for each subsequent transaction that that matches
-#          a previous transaction in the file.
-
-# 8/14/2016: Discover BANK now uses an FITID format of SDF######, where ###### is unique for the day.
-#            The length seems to vary, but the largest observed is 6 digits
-#            Unfortunately, the digits can be assigned to multiple transactions on the same day, so it isn't
-#               guaranteed to be unique.
-#            Modified routine to uniquely handle BASTMT vs CCSTMT statements.
-
-# NOTE:  There was brief period in late 2017 where Discover Bank changed their fitid format, but soon
-#        reverted to the same as described above.
-
-_sD_knownvals = []  #global to keep track of Discover FITID values between regex.sub() calls
-
-def _scrubDiscover(ofx, accType):
-
-    if accType=='CCSTMT':
-        scrubPrint("Scrubber: Processing Discover Card statement.")
-    else:
-        scrubPrint("Scrubber: Processing Discover Bank statement.")
-
-    ofx_final = ''      #new ofx message
-    _sD_knownvals = []  #reset our global set of known vals (just in case)
-
-    # dev: insert a line break after each transaction for readability.
-    # also helps block multi-transaction matching in below regexes via ^\s option
-    p = re.compile(r'(<STMTTRN>)',re.IGNORECASE)
-    ofx = p.sub(r'\n<STMTTRN>', ofx)
-
-    #regex p captures everything from <FITID> up to the next <tag>, but excludes the next "<".
-    #p produces 2 results:  r.group(1) = <FITID> field, r.group(2)=value
-    #the ^<\s prevents matching on the next < or newline
-    p = re.compile(r'(<FITID>)([^<\s]+)',re.IGNORECASE)
-
-    #call substitution (inline lamda, takes regex result = r as tuple)
-    ofx_final = p.sub(lambda r: _scrubDiscover_r1(r, accType), ofx)
-
-    if accType=='BASTMT':
-        #regex p captures everything from <TRNTYPE>DEBIT up to the next "<" aftert the <NAME>Check tag and field.
-        # Discover Bank codes checks as
-        # <STMTTRN><TRNTYPE>DEBIT<...><NAME>Check ###########</STMTTRN>
-        # p produces 4 results:
-        #   r.group(1) = <TRNTYPE>DEBIT,
-        #   r.group(2) = stuff up to next "<NAME>Check "
-        #   r.group(3) = "<NAME>Check ", including the trailing spaces (at least 1)
-        #   r.group(4) is the check number (1 or more digits)
-        # Rearranged, the result should produce a entry that will import the check number in Money
-        # <STMTTRN><TRNTYPE>CHECK<...><CHECKNUM>############<NAME>Check</STMTTRN>
-        ofx = ofx_final
-        p = re.compile(r'(<TRNTYPE>DEBIT)([^\s]+)(<NAME>Check[ ]+)([0-9]+)',re.IGNORECASE)
-        ofx_final = p.sub(lambda r: _scrubDiscover_r2(r, accType), ofx)
-
-    return ofx_final
-
-def _scrubDiscover_r1(r, accType):
-    #regex subsitution function: change fitid value
-    global _sD_knownvals
-
-    fieldtag = r.group(1)
-    fitid = r.group(2).strip(' ')
-    fitid_b = fitid                     #base fitid before annotating
-
-    #strip the serial value for credit card transactions
-    if accType=='CCSTMT':
-        bx = len(fitid) - 5
-        fitid_b = fitid[:bx]
-
-    #find a unique serial#, from 0 to 9999
-    seq = 0   #default
-    while seq < 9999:
-        fitid = fitid_b + str(seq)
-        exists = (fitid in _sD_knownvals)
-        if exists:  #already used it... try another
-            seq=seq+1
-        else:
-            break   #unique value... write it out
-
-    _sD_knownvals.append(fitid)         #remember the assigned value between calls
-    return fieldtag + fitid             #return the new string for regex.sub()
-
-def _scrubDiscover_r2(r, accType):
-    #regex subsitution function: insert checknum field for BANK statements
-    trntype = r.group(1)
-    rest = r.group(2)
-    name = r.group(3).strip(' ')
-    checknum = r.group(4)
-    return '<TRNTYPE>CHECK' + rest + '<CHECKNUM>' + checknum + name
+    with open(filename, 'w') as f:
+        f.write(ofx)
 
 #--------------------------------
 def _scrubTime(ofx):
@@ -330,7 +245,7 @@ def _scrubINVsign(ofx):
 
     global stat
     stat = False
-    p = re.compile(r'(<INVBUY>|<INVSELL>)(.+?<UNITS>)(.+?)(<.+?<TOTAL>)([^<\r\n]+)', re.IGNORECASE)
+    p = re.compile(r'(<INVBUY>|<INVSELL>)(.+?<UNITS>)(.+?)(<.+?<TOTAL>)([^<\n]+)', re.IGNORECASE)
     ofx_final=p.sub(lambda r: _scrubINVsign_r1(r), ofx)
     if stat:
         scrubPrint("Scrubber: Invalid investment sign (pos/neg) found.  Corrected.")
@@ -369,7 +284,7 @@ def _scrubREINVESTsign(ofx):
 
     global stat
     stat=False
-    p = re.compile(r'(<REINVEST>)(.+?<TOTAL>)(.+?)(<.+?<UNITS>)([^<\r\n]+)', re.IGNORECASE)
+    p = re.compile(r'(<REINVEST>)(.+?<TOTAL>)(.+?)(<.+?<UNITS>)([^<\n]+)', re.IGNORECASE)
     ofx_final=p.sub(lambda r: _scrubREINVESTsign_r1(r), ofx)
     if stat:
         scrubPrint("  +Scrubber: Invalid reinvestment sign (pos/neg) found.  Corrected.")
@@ -399,15 +314,24 @@ def _scrubGeneral(ofx):
 
     #1. Remove tag/value pairs that Money doesn't support
     #define unsupported tags that we've had trouble with
+    global stat
     uTags = []
     uTags.append('CORRECTACTION')
     uTags.append('CORRECTFITID')
+    uTags.append('REFNUM')
+    uTags.append('SIC')
 
     for tag in uTags:
-        p = re.compile(r'<'+tag+'>[^<]+',re.IGNORECASE)
+        # Remove open tag and value
+        p = re.compile(r'<'+tag+'>[^<]*',re.IGNORECASE)
         if p.search(ofx):
             ofx = p.sub('',ofx)
             scrubPrint("Scrubber: <"+tag+"> tags removed.  Not supported by Money.")
+        # Remove close tag (if any) [could probably create a very smart RE to merge these two REs]
+        p = re.compile(r'</'+tag+'>',re.IGNORECASE)
+        if p.search(ofx):
+            ofx = p.sub('',ofx)
+            scrubPrint("Scrubber: </"+tag+"> closing tags removed.")
 
     #2. Replace ampersands '&' that aren't part of a valid escape code (i.e., is NOT like &amp;, &#012; etc)
     #   literally:  replace '&' chars with '&amp;' when the next chars are not
@@ -417,7 +341,23 @@ def _scrubGeneral(ofx):
         scrubPrint("Scrubber: Replace invalid '&' chars with '&amp;'")
         ofx = p.sub('&amp;',ofx)
 
+    #3. Replace null or missing <TRNTYPE> with 'OTHER'
+    #   regex captures <TRNTYPE>, value, and first '<' or white space char
+    p = re.compile(r'(<TRNTYPE>)(.*?)([<\s])', re.IGNORECASE)
+    if p.search(ofx):
+        stat=False
+        ofx = p.sub(lambda r: _scrubGeneral_r1(r), ofx)
+        if stat: scrubPrint("Null or missing TRNTYPE replaced with 'OTHER' ")
     return ofx
+
+def _scrubGeneral_r1(r):
+    # replace null or missing TRNTYPE with 'OTHER'
+    global stat
+    trntype = r.group(2)
+    if trntype.upper() in ('NULL',''):
+        trntype='OTHER'
+        stat=True
+    return r.group(1) + trntype + r.group(3)
 
 def _scrubRemoveZeroTrans(ofx):
     #Remove transactions with a $0.00 value
@@ -441,109 +381,13 @@ def _scrubRemoveZeroTrans_r1(r):
     if amount==0: stat=True
     return None if amount==0 else r.group(1)+r.group(2)+r.group(3)
 
-
-#-----------------------------------------------------------------------------
-# OFX fiorg T. Rowe Price
-#   1.  T. Rowe Price OFX reports paid-out (non-reinvested) dividends and capital gains incorrectly
-#           in such a way that MS Money ignores the transaction.
-#       These transactions can be identified as reinvestments having 0.0 shares.
-#       The transaction will be bounded by <REINVEST> and </REINVEST> and contain <UNITS>0.0.
-#       Furthermore, the payment is incorrectly shown as a negative value, the memo field is misleading, and
-#           a required field (<SUBACCTFUND>) is missing.
-#
-#       For dividends (<INCOMETYPE>DIV) make these changes to the transaction:
-#           Change <REINVEST> to <INCOME>
-#           Change <MEMO>DIVIDEND (REINVEST) to <MEMO>DIVIDEND PAID
-#           Change <TOTAL>-#.## to <TOTAL>#.##
-#           Following <SUBACCTSEC>CASH add <SUBACCTFUND>CASH
-#           Delete <UNITS>0.0
-#           Delete <UNITPRICE>#.##
-#           Change </REINVEST> to </INCOME>
-
-#       For short term capital gains (<INCOMETYPE>CGSHORT) make these changes to the transaction:
-#           Change <REINVEST> to <INCOME>
-#           Change <MEMO>SHORT TERM CAP GAIN REIN to <MEMO>SHORT TERM CAP GAIN PAID
-#           Change <TOTAL>-#.## to <TOTAL>#.##
-#           Following <SUBACCTSEC>CASH add <SUBACCTFUND>CASH
-#           Delete <UNITS>0.0
-#           Delete <UNITPRICE>#.##
-#           Change </REINVEST> to </INCOME>
-
-#       For long term capital gains (<INCOMETYPE>CGLONG) make these changes to the transaction:
-#           Change <REINVEST> to <INCOME>
-#           Change <MEMO>LONG TERM CAPITAL GAI to <MEMO>LONG TERM CAPITAL GAIN PAID
-#           Change <TOTAL>-#.## to <TOTAL>#.##
-#           Following <SUBACCTSEC>CASH add <SUBACCTFUND>CASH
-#           Delete <UNITS>0.0
-#           Delete <UNITPRICE>#.##
-#           Change </REINVEST> to </INCOME>
-
-def _scrubTRowePrice(ofx):
-    global stat
-    ofx_final = ''      #new ofx message
-    stat = False
-    if Debug: print('Function _scrubTRowePrice(OFX) called')
-
-    #Process all <REINVEST>...</REINVEST> transactions
-    #Use non-greedy quantifier .+? to avoid matching across transactions.
-    p = re.compile(r'<REINVEST>.+?</REINVEST>',re.IGNORECASE)
-    #re.sub() command operates on every non-overlapping occurence of pattern when passed a function for replacement
-    ofx_final = p.sub(lambda r: _scrubTRowePrice_r1(r), ofx)
-
-    if stat: scrubPrint("Scrubber: T Rowe Price dividends/capital gains paid out.")
-
-    return ofx_final
-
-def _scrubTRowePrice_r1(r):
-    #regex subsitution function: if <UNITS>0.0 then convert transaction from <REINVEST> to <INCOME>
-
-    global stat
-
-    #Copy the reinvested transaction for manipulation
-    ReinvTrans = r.group(0)
-    #Create variable for the paid out transaction
-    PaidTrans = ''
-
-    # If units are 0.0 then scrub the ofx transaction
-    if '<UNITS>0.0<' in ReinvTrans.upper():
-        #Flag that at least one transaction is scrubbed
-        stat = True
-
-        #Use regex to parse the REINVEST transaction with following format
-        #<REINVEST>...<MEMO>erroneous memo</INVTRAN>...<INCOMETYPE>DIV or CGSHORT or CGLONG<TOTAL>-#.##<SUBACCTSEC>CASH<UNITS>0.0<UNITPRICE>33.33</REINVEST>
-        #into these 10 groups:
-        #   m.group(1) = <REINVEST>
-        #   m.group(2) = ...<MEMO>
-        #   m.group(3) = erroneous memo
-        #   m.group(4) = </INVTRAN>...<INCOMETYPE>
-        #   m.group(5) = type of income (eg DIV, CGSHORT, CGLONG)
-        #   m.group(6) = <TOTAL>-#.##
-        #   m.group(7) = <SUBACCTSEC>CASH
-        #   m.group(8) = <UNITS>#.###
-        #   m.group(9) = <UNITPRICE>#.##
-        #   m.group(10) = </REINVEST>
-        p = re.compile(r'(<REINVEST>)(<.+?<MEMO>)(.+?[^<]*)(</INVTRAN>.+?<INCOMETYPE>)(.+?[^<]*)(<TOTAL>.+?[^<]*)(<SUBACCTSEC>.+?[^<]*)(<UNITS>.+?[^<]*)(<UNITPRICE>.+?[^<]*)(</REINVEST>)',re.IGNORECASE)
-        m = p.match(ReinvTrans)
-
-        gr01 = '<INCOME>'   #Change from <REINVEST>
-        gr02 = m.group(2)
-        gr04 = m.group(4)
-        gr05 = m.group(5)
-        if     gr05 == 'DIV'     : gr03 = 'DIVIDEND PAID'
-        elif   gr05 == 'CGSHORT' : gr03 = 'SHORT TERM CAP GAIN PAID'
-        elif   gr05 == 'CGLONG'  : gr03 = 'LONG TERM CAPITAL GAIN PAID'
-        else : gr03 = m.group(3)    #Leave as reported
-        gr06 = m.group(6).replace('-','')
-        gr07 = m.group(7) + '<SUBACCTFUND>CASH'
-        #No need to capture m.group(8) since it is deleted
-        #No need to capture m.group(9) since it is deleted
-        gr10 = '</INCOME>'
-        PaidTrans = gr01+gr02+gr03+gr04+gr05+gr06+gr07+gr10
-
-    if Debug: print('Reinv Trans: '+ReinvTrans)
-    if Debug: print('Paid  Trans: '+PaidTrans)
-
-    return PaidTrans             #return the new string for regex.sub()
-
-# end t.rowe.price div reinvest scrubber
-#-----------------------------------------------------------------------------
+def _scrubHeader(ofx):
+    # Look for header lines that have space after the colon.
+    #(we look based on format, in theory the RE could find them in the wrong place)
+    p = re.compile(r'(^[^<:\n]+:)(\s)([^\n]+)', flags=re.MULTILINE)
+    if p.search(ofx):
+        # Remove the space
+        result = p.subn(r'\1\3',ofx)
+        ofx = result[0]
+        scrubPrint("Scrubber: Removed spaces in " + str(result[1]) + " header lines.")
+    return ofx

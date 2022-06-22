@@ -14,9 +14,12 @@
 #   - Add support for user-specific clientUID pairs (by url+username)
 # 09Nov2017*rlc
 #   - prefix positive change w/ '+' symbol
+# 20Feb2021*rlc
+#   - minor edits while implementing recent updates, including Requests rather than httplib
+#   - removed OfxDate() and added dateTimeStr()
 
 import os, glob, site_cfg, time, uuid, re, random
-import sys, pyDes, hashlib, pickle, locale, urllib.request, getpass
+import sys, pyDes, hashlib, pickle, locale, urllib.parse, getpass
 from datetime import datetime
 from control2 import *
 
@@ -138,9 +141,9 @@ def acctDecrypt(AcctArray, pwkey):
 def get_cfg():
     #read in user configuration
 
+    AcctArray = []        #AcctArray = [['SiteName', 'Account#', 'AcctType', 'UserName', 'PassWord'], ...]
     pwkey=''              #default = no encryption
     getquotes = False     #default = no quotes
-    AcctArray = []        #AcctArray = [['SiteName', 'Account#', 'AcctType', 'UserName', 'PassWord'], ...]
     if glob.glob(cfgFile) != []:
         cfg = open(cfgFile,'rb')
         try:
@@ -287,7 +290,7 @@ def _QHTMrow(f, quote, shade):
 
 def _QHTMfooter(f):
     #footer for quotes.htm
-    qTime = datetime.today().strftime("%m-%d-%Y at %H:%M:%S")
+    qTime = datetime.now().strftime("%m-%d-%Y at %H:%M:%S")
 
     sitepath = os.path.realpath('sites.dat')
     sitepath = '<a href="file:///' + sitepath + '"><b>sites.dat</b></a>'
@@ -335,8 +338,13 @@ def OfxTag(tag,*contents):
     tag2 = '</' + tag + '>'
     return '\r\n'.join([tag1]+list(contents)+[tag2])
 
-def OfxDate():
-    return time.strftime("%Y%m%d%H%M%S",time.localtime())
+def dateTimeStr(utc=False, tz=False):
+    if utc:
+        #return time at GMT
+        return datetime.utcnow().strftime("%Y%m%d%H%M%S") + ('[+0:UTC]' if tz else '')
+    else:
+        #local time
+        return datetime.now().strftime("%Y%m%d%H%M%S")
 
 def ofxUUID():
     return str(uuid.uuid4())
@@ -392,8 +400,8 @@ def copy_txt_file(infile, outfile):
 def combineOfx(ofxList):
     #combine ofx statements into a single file in a manner that Money seems to accept
 
-    dtnow = time.strftime("%Y%m%d%H%M%S",time.localtime())
-    signon =  "\r".join([
+    dtnow = dateTimeStr()
+    signon =  "\n".join([
               "<SIGNONMSGSRSV1><SONRS>",
               "<STATUS><CODE>0<SEVERITY>INFO<MESSAGE>Successful Sign On</STATUS>",
               "<DTSERVER>" + dtnow,
@@ -422,28 +430,28 @@ def combineOfx(ofxList):
 
             #create a string for each section found in the file
             #re.findall() returns a list of all matching sections
-            b = '\r'.join(bRe.findall(ofx))
-            c = '\r'.join(cRe.findall(ofx))
-            i = '\r'.join(iRe.findall(ofx))
-            s = '\r'.join(sRe.findall(ofx))
+            b = '\n'.join(bRe.findall(ofx))
+            c = '\n'.join(cRe.findall(ofx))
+            i = '\n'.join(iRe.findall(ofx))
+            s = '\n'.join(sRe.findall(ofx))
 
             #add statements to each section
-            if b: bantrn = bantrn + '\r' + b
-            if c: crdtrn = crdtrn + '\r' + c
-            if i: invtrn = invtrn + '\r' + i
-            if s: sectrn = sectrn + '\r' + s
+            if b: bantrn = bantrn + '\n' + b
+            if c: crdtrn = crdtrn + '\n' + c
+            if i: invtrn = invtrn + '\n' + i
+            if s: sectrn = sectrn + '\n' + s
 
     if bantrn: bantrn = OfxTag('BANKMSGSRSV1', bantrn)
     if crdtrn: crdtrn = OfxTag('CREDITCARDMSGSRSV1', crdtrn)
     if invtrn: invtrn = OfxTag('INVSTMTMSGSRSV1', invtrn)
     if sectrn: sectrn = OfxTag('SECLISTMSGSRSV1', OfxTag('SECLIST', sectrn))
 
-    combOfx = '\r'.join(['<OFX>', signon, bantrn, crdtrn, invtrn, sectrn, '</OFX>'])
+    combOfx = '\n'.join(['<OFX>', signon, bantrn, crdtrn, invtrn, sectrn, '</OFX>'])
 
     #remove blank lines (not required... just to clean it up)
     combOfx2=''
     for line in combOfx.splitlines():
-        if line: combOfx2 = combOfx2 + line + '\r'
+        if line: combOfx2 = combOfx2 + line + '\n'
 
     combOfx = OfxSGMLHeader() + combOfx2
 
