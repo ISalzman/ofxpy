@@ -17,14 +17,68 @@
 # 20Feb2021*rlc
 #   - minor edits while implementing recent updates, including Requests rather than httplib
 #   - removed OfxDate() and added dateTimeStr()
+# 19Jun2023*rlc
+#   - add logging
 
 import os, glob, site_cfg, time, uuid, re, random
-import sys, pyDes, hashlib, pickle, locale, urllib.parse, getpass
+import hashlib, urllib.parse, getpass
+import logging, logging.handlers
+import sys, pyDes, pickle
 from datetime import datetime
 from control2 import *
 
 if Debug:
     import traceback
+#logging handlers <begin> ------
+
+class logMultiLineFormatter(logging.Formatter):
+    #indent multi-line text for logger
+    def format(self, record):
+        msg = record.getMessage()
+        if msg.count("\n") > 1:
+            indented_msg = ''.join('\t\t' + line for line in msg.split("\n"))
+            record.msg = '\n' + indented_msg
+        return logging.Formatter.format(self, record)
+    
+def create_logger(name, filename):
+
+    # Create a logger
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.DEBUG)
+
+    # Create a log file handler with size limit (size defined in control2.py)
+    file_handler = logging.handlers.RotatingFileHandler(filename, maxBytes=logFileLimit * 1024**2, backupCount=0)
+    file_handler.setLevel(logging.DEBUG)
+
+    # Create a stream handler for the screen
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.INFO)
+
+    # formatters for log messages.
+    file_formatter = logMultiLineFormatter('%(asctime)s - %(levelname)s - %(message)s')
+    screen_formatter = logging.Formatter('%(message)s')
+
+    # Add the formatter to the handlers
+    file_handler.setFormatter(file_formatter)
+    stream_handler.setFormatter(screen_formatter)
+
+    # Add the handlers to the logger
+    logger.addHandler(stream_handler)
+    if logFileEnable: logger.addHandler(file_handler)
+
+    #warn if sensitive info is in the log file, which may happen during debug
+    try:
+        with open(filename) as f:
+            log=f.read()
+        if '<USERID>' in log or '<USERPASS>' in log:
+            logger.warn('**Sensitive user/account info found in %s' % filename)
+    except:
+        raise
+    
+    return logger
+
+#logging handlers <end> ------
+
 
 def clientUID(url, username, delKey=False):
     #get clientUID for urlHost+username.  if not exists, create
@@ -160,7 +214,7 @@ def QuoteHTMwriter(qList):
     # Supports Yahoo! finance links
     # See quotes.py for qList structure
     global userdat
-
+    log = logging.getLogger('root')
     userdat = site_cfg.site_cfg()
 
     # CREATE FILE
@@ -168,7 +222,7 @@ def QuoteHTMwriter(qList):
     fullpath = '"' + os.path.realpath(filename) + '"'   #encapsulate spaces
 
     f = open(filename,"w")
-    print("Writing", filename)
+    log.info('Writing %s' % filename)
 
     # Write HEADER
     _QHTMheader(f)
@@ -279,7 +333,7 @@ def _QHTMrow(f, quote, shade):
     lspace = '&nbsp;' * (10-len(quote.date)) #leave space for double-digit month
 
     row = td1 + quote.source + '</td>' + \
-          td1 + '<a href=' + quote.quoteURL +'>'+quote.symbol+'</a></td>' + \
+          td1 + '<a href="' + quote.quoteURL +'" target="_blank">'+quote.symbol+'</a></td>' + \
           td1L+ quote.name+'</td>' + \
           td1R+ quote.price + '</td>' + \
           td1 + lspace + quote.date + tspace + quote.time +'</td>' + \
@@ -365,6 +419,10 @@ def validOFX(content):
     #note:  spaces get stripped before this function is called
     elif content.find('ACCESSDENIED') > 0:
         msg = 'Access denied'
+
+    if content.find('<INVPOS>') > -1 and content.find('<SECLIST>') < 0:
+        #An investment statement must contain a <SECLIST> section when a <INVPOSLIST> section exists
+        msg = "OFX statement contains <INVPOS> record but missing required <SECLIST> section"
 
     return msg
 
@@ -460,5 +518,5 @@ def combineOfx(ofxList):
     f=open(cfile,'w')
     f.write(combOfx)
     f.close()
-    print("Combined OFX created: " + cfile)
+    print('Combined OFX created: %s' % cfile)
     return cfile

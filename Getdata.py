@@ -5,7 +5,7 @@
 # retrieve statements, stock and fund data
 # Intial version: rlc: Feb-2010
 
-# Revisions
+# History
 # ---------
 # 11-Mar-2010*rlc
 #   - Added "interactive" mode
@@ -51,13 +51,21 @@
 #16Sep2019*rlc
 #   - Add support for ofx import from ./import subfolder.  any file present in ./import will be inspected,
 #     and if it looks like a valid OFX file, will be processed the same as a downloaded statement (scrubbed, etc.)
+#19Jun2023*rlc
+#   - add logging
 
 import os, sys, glob, time, re
 import ofx, quotes, site_cfg, scrubber
 from control2 import *
 from rlib1 import *
 
+#startup
+print('')
 userdat = site_cfg.site_cfg()
+log = create_logger('root', 'getdata.log')
+if Debug:
+    log.warning("**DEBUG Enabled: See Control2.py to disable.")
+    log.debug('xfrdir = %s' % xfrdir)
 
 def getSite(ofx):
     # find matching site entry for ofx
@@ -79,7 +87,7 @@ def getSite(ofx):
             thisBankid = FieldVal(sites[s], 'bankid')
             if thisFid == fid or thisBankid == bankid:
                 site = sites[s]
-                print('Matched import file to site *%s*' % s)
+                log.info('Matched import file to site *%s*' % s)
                 break
 
     return site
@@ -88,9 +96,13 @@ if __name__=="__main__":
 
     stat1 = True    #overall status flag across all operations (true == no errors getting data)
     quotesExist = False
-    print(AboutTitle + ", Ver: " + AboutVersion + "\n")
+    print('')
+    log.info(AboutTitle + ", Ver: " + AboutVersion)
 
-    if Debug: print("***Running in DEBUG mode.  See Control2.py to disable***\n")
+    if Debug:
+        httpsVerify = False if os.environ.get('PYTHONHTTPSVERIFY','')=='0' else True
+        log.debug('httpsVerify ' + 'ON' if httpsVerify else 'OFF')
+
     doit='Y'
     if userdat.promptStart:
         doit = input("Download transactions? (Y/N/I=Interactive) [Y] ").upper()
@@ -103,7 +115,7 @@ if __name__=="__main__":
                 p = int2(input("Download interval (days) [" + str(interval) + "]: "))
                 if p>0: interval = p
             except:
-                print("Invalid entry. Using defaultInterval=" + str(interval))
+                log.info("Invalid entry. Using defaultInterval=" + str(interval))
 
         #get account info
         #AcctArray = [['SiteName', 'Account#', 'AcctType', 'UserName', 'PassWord'], ...]
@@ -123,7 +135,7 @@ if __name__=="__main__":
         for ofxfile in glob.glob(ofxfiles):
             os.remove(ofxfile)
 
-        print("Download interval= {0} days".format(interval))
+        log.info("Default download interval= {0} days".format(interval))
 
         #create process Queue in the right order
         Queue = ['Accts', 'importFiles']
@@ -136,7 +148,7 @@ if __name__=="__main__":
 
             if QEntry == 'Accts':
                 if len(AcctArray) == 0:
-                  print("No accounts have been configured. Run SETUP.PY to add accounts")
+                  log.info("No accounts have been configured. Run SETUP.PY to add accounts")
 
                 #process accounts
                 badConnects = []   #track [sitename, username] for failed connections so we don't risk locking an account
@@ -155,7 +167,7 @@ if __name__=="__main__":
                 #include anything that looks like a valid ofx file regardless of extension
                 #attempts to find site entry by FID found in the ofx file
 
-                print('Searching %s for statements to import' % importdir)
+                log.info('Searching %s for statements to import' % importdir)
                 for f in glob.glob(importdir+'*.*'):
                     fname     = os.path.basename(f)   #full base filename.extension
                     bname = os.path.splitext(fname)[0]     #basename w/o extension
@@ -165,18 +177,18 @@ if __name__=="__main__":
 
                     #only import if it looks like an ofx file
                     if validOFX(dat) == '':
-                        print("Importing %s" % fname)
+                        log.info("Importing %s" % fname)
                         if 'NEWFILEUID:PSIMPORT' not in dat[:200]:
                             #only scrub if it hasn't already been imported (and hence, scrubbed)
                             try:
                                 site = getSite(dat)
                                 scrubber.scrub(f, site)
                             except:
-                                print('No site defined for %s: skipping scrubber' % fname)
+                                log.info('No site defined for %s in sites.dat: skipping scrub routines' % fname)
 
                         #set NEWFILEUID:PSIMPORT to flag the file as having already been imported/scrubbed
                         #don't want to accidentally scrub twice
-                        with open(f, 'rU') as ifile:
+                        with open(f, 'r') as ifile:
                             ofx = ifile.read()
                         p = re.compile(r'NEWFILEUID:.*')
                         ofx2 = p.sub('NEWFILEUID:PSIMPORT', ofx)
@@ -187,6 +199,7 @@ if __name__=="__main__":
                         outname = xfrdir+fname + ('' if bext=='.ofx' else '.ofx')
                         os.rename(f, outname)
                         ofxList.append(['import file', '', outname])
+                        log.info('%s saved to %s' % (fname, outname))
 
             #get stock/fund quotes
             if QEntry == 'Quotes' and getquotes:
@@ -202,23 +215,25 @@ if __name__=="__main__":
                 if status and userdat.showquotehtm: os.startfile(htmFileName)
 
         if len(ofxList) > 0:
-            print('\nFinished downloading data\n')
+            log.info('Downloads completed.')
             verify = False
             gogo = 'Y'
             if userdat.combineofx and gogo != 'V':
                 cfile=combineOfx(ofxList)       #create combined file
 
             if doit == 'I' or Debug:
-                gogo = input('Upload online data to Money? (Y/N/V=Verify) [Y] ').upper()
+                gogo = input('Upload results to Money? (Y/N/V=Verify) [Y] ').upper()
                 gogo = 'Y' if gogo=='' else gogo[:1]    #first letter
+
+            if gogo == 'N': log.info('Results not sent to Money.  User cancelled.')
 
             if gogo in 'YV':
                 if glob.glob(quoteFile2) != []:
-                    if Debug: print("Importing ForceQuotes statement: " + quoteFile2)
+                    if Debug: log.debug("Importing ForceQuotes statement: %s" % quoteFile2)
                     runFile(quoteFile2)  #force transactions for MoneyUK
                     input('ForceQuote statement loaded.  Accept in Money and press <Enter> to continue.')
 
-                print('\nSending statement(s) to Money...')
+                log.info('Sending statement(s) to Money...')
                 if userdat.combineofx and cfile and gogo != 'V':
                     runFile(cfile)
                 else:
@@ -229,7 +244,7 @@ if __name__=="__main__":
                             upload = input('Upload ' + file[0] + ' : ' + file[1] + ' (Y/N) ').upper() == 'Y'
 
                         if upload:
-                           if Debug: print("Importing " + file[2])
+                           log.info("Importing " + file[2])
                            runFile(file[2])
 
                         time.sleep(0.5)   #slight delay, to force load order in Money
@@ -244,11 +259,13 @@ if __name__=="__main__":
 
         else:
             if len(AcctArray)>0 or (getquotes and len(userdat.stocks)>0):
-                print("\nNo files were downloaded. Verify network connection and try again later.")
+                log.warning("No files were downloaded. Verify network connection and try again later.")
             input("Press <Enter> to continue...")
 
         if Debug:
-            input("DEBUG END:  Press <Enter> to continue...")
+            input("Press <Enter> to continue...")
         elif not stat1:
-            print("\nOne or more accounts (or quotes) may not have downloaded correctly.")
+            log.warning("One or more accounts (or quotes) may not have downloaded correctly.")
             input("Review and press <Enter> to continue...")
+
+    log.info('-----------------------------------------------------------------------------------')

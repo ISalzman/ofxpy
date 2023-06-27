@@ -65,19 +65,23 @@
 
 #27-Mar-2021*cgn
 #  - open ofx file w/ 'U' qualifier.  Forces newlines to match Windows convention (e.g., \n = <CR><LF>)
+#19Jun2023*rlc
+#   - add logging
 
-import os, sys, re, glob
+import os, sys, re, glob, logging
 import site_cfg
 from datetime import datetime, timedelta
 from control2 import *
 from rlib1 import *
+
+log = logging.getLogger('root')
 
 userdat = site_cfg.site_cfg()
 stat = False    #global used between re lambda subs to track status
 
 def scrubPrint(line):
     if not userdat.quietScrub:
-        print("  +" + line)
+        log.info("+ %s" % line)
 
 def scrub(filename, site):
     #filename = string
@@ -87,9 +91,8 @@ def scrub(filename, site):
     dtHrs = FieldVal(site, 'timeOffset')
     accType = FieldVal(site, 'CAPS')[1]
     site_skip_zt = FieldVal(site, 'skipzerotrans')
-    with open(filename,'rU') as f:
+    with open(filename,'r') as f:
         ofx = f.read()  #as-found ofx message
-        #print(ofx)
 
     ofx = _scrubHeader(ofx) #Remove illegal spaces in OFX header lines
 
@@ -123,8 +126,7 @@ def scrub(filename, site):
             else:
                 scrubPrint(scrubFile + ' ERROR: Custom scrub_*.py files must return a valid OFX message.')
         except Exception as e:
-            scrubPrint('An error occurred when processing scrub module: ' + scrublet)
-            print(e)
+            log.exception('An error occurred when processing scrub module: %s' % scrublet)
 
     #write the new version to the same file
     with open(filename, 'w') as f:
@@ -136,7 +138,7 @@ def _scrubTime(ofx):
 
     #regex p captures everything from <DT*> up to the next <tag>, but excludes the next "<".
     #p produces 2 results:  group(1) = <DT*> field, group(2)=dateval
-    p = re.compile(r'(<DT.+?>)([^<\s]+)',re.IGNORECASE)
+    p = re.compile(r'(<DT.+?>)([^<\s]+)', re.IGNORECASE)
     #call date correct function (inline lamda, takes regex result = r tuple)
 
     global stat
@@ -177,8 +179,8 @@ def _scrubDTSTART(ofx):
         scrubPrint("Scrubber: Fixing missing <DTEND> field")
 
         #regex p captures everything from <DTSTART> up to the next <tag> or white space into group(1)
-        p = re.compile(r'(<DTSTART>[^<\s]+)',re.IGNORECASE)
-        if Debug: print("DTSTART: findall()=", p.findall(ofx_final))
+        p = re.compile(r'(<DTSTART>[^<\s]+)', re.IGNORECASE)
+        if Debug: log.debug('DTSTART: findall()=%s' % p.findall(ofx_final))
         #replace group1 with (group1 + <DTEND> + datetime)
         ofx_final = p.sub(r'\1<DTEND>'+nowstr, ofx_final)
 
@@ -190,7 +192,7 @@ def _scrubShiftTime(ofx, h):
 
     #regex p captures everything from <DTASOF> up to the next <tag> or white-space.
     #p produces 2 results:  group(1) = <DTASOF> field, group(2)=dateval
-    p = re.compile(r'(<DTASOF>)([^<\s]+)',re.IGNORECASE | re.DOTALL)
+    p = re.compile(r'(<DTASOF>)([^<\s]+)', re.IGNORECASE | re.DOTALL)
 
     #call date correct function (inline lamda, takes regex result = r tuple)
     if p.search(ofx):
@@ -206,7 +208,7 @@ def _scrubShiftTime_r1(r,h):
     fieldtag = r.group(1)       #date field tag (e.g., <DTASOF>)
     DT = r.group(2).strip(' ')  #date+time
 
-    if Debug: print("fieldtag=", fieldtag, "| DT=" + DT)
+    if Debug: log.debug('fieldtag=%s | DT=%s' % (fieldtag, DT))
 
     # Full date/time format example:  20100730120000.000[-4:EDT]
     #separate into date/time + timezone
@@ -221,7 +223,7 @@ def _scrubShiftTime_r1(r,h):
         d  = DT.index('.')
         DT = DT[:d]
 
-    if Debug: scrubPrint("New DT=" + DT + "| tz=" + tz)
+    if Debug: log.debug('New DT=%s | tz=%s' % (DT, tz))
 
     #shift the time
     tval = datetime.strptime(DT,"%Y%m%d%H%M%S")  #convert str to datetime
@@ -245,7 +247,7 @@ def _scrubINVsign(ofx):
 
     global stat
     stat = False
-    p = re.compile(r'(<INVBUY>|<INVSELL>)(.+?<UNITS>)(.+?)(<.+?<TOTAL>)([^<\n]+)', re.IGNORECASE)
+    p = re.compile(r'(<INVBUY>|<INVSELL>)(.+?<UNITS>)(.+?)(<.+?<TOTAL>)([^<]+)', re.IGNORECASE | re.DOTALL)
     ofx_final=p.sub(lambda r: _scrubINVsign_r1(r), ofx)
     if stat:
         scrubPrint("Scrubber: Invalid investment sign (pos/neg) found.  Corrected.")
@@ -284,7 +286,7 @@ def _scrubREINVESTsign(ofx):
 
     global stat
     stat=False
-    p = re.compile(r'(<REINVEST>)(.+?<TOTAL>)(.+?)(<.+?<UNITS>)([^<\n]+)', re.IGNORECASE)
+    p = re.compile(r'(<REINVEST>)(.+?<TOTAL>)(.+?)(<.+?<UNITS>)([^<]+)', re.IGNORECASE | re.DOTALL)
     ofx_final=p.sub(lambda r: _scrubREINVESTsign_r1(r), ofx)
     if stat:
         scrubPrint("  +Scrubber: Invalid reinvestment sign (pos/neg) found.  Corrected.")
@@ -323,7 +325,7 @@ def _scrubGeneral(ofx):
 
     for tag in uTags:
         # Remove open tag and value
-        p = re.compile(r'<'+tag+'>[^<]*',re.IGNORECASE)
+        p = re.compile(r'<'+tag+'>[^<]*', re.IGNORECASE)
         if p.search(ofx):
             ofx = p.sub('',ofx)
             scrubPrint("Scrubber: <"+tag+"> tags removed.  Not supported by Money.")
@@ -367,8 +369,7 @@ def _scrubRemoveZeroTrans(ofx):
 
     global stat
     stat=False
-    p = re.compile(r'(<STMTTRN>.*?<TRNAMT>)(.+?)(<.*?</STMTTRN>)',
-                   flags=re.DOTALL | re.IGNORECASE)
+    p = re.compile(r'(<STMTTRN>.*?<TRNAMT>)(.+?)(<.*?</STMTTRN>)', re.DOTALL | re.IGNORECASE)
 
     ofx = p.sub(lambda r: _scrubRemoveZeroTrans_r1(r), ofx)
     if stat: scrubPrint('Zero amount ($0.00) transactions removed.')
@@ -384,7 +385,7 @@ def _scrubRemoveZeroTrans_r1(r):
 def _scrubHeader(ofx):
     # Look for header lines that have space after the colon.
     #(we look based on format, in theory the RE could find them in the wrong place)
-    p = re.compile(r'(^[^<:\n]+:)(\s)([^\n]+)', flags=re.MULTILINE)
+    p = re.compile(r'(^[^<:\n]+:)(\s)([^\n]+)', re.MULTILINE)
     if p.search(ofx):
         # Remove the space
         result = p.subn(r'\1\3',ofx)

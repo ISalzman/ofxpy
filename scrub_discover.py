@@ -5,7 +5,8 @@ from scrubber import scrubPrint
 import re
 
 def scrub(ofx, siteURL, accType):
-    #if 'DISCOVERCARD' in siteURL: ofx= _scrubDiscover(ofx, accType)
+
+    if 'DISCOVERCARD' in siteURL: ofx= _scrubDiscover(ofx, accType)
     return ofx
 
 
