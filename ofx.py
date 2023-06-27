@@ -287,7 +287,7 @@ class OFXClient:
                 errmsg= "** An ERROR occurred sending POST request to"
                 response = s.post(self.url, data=query, verify=httpsVerify)
 
-                respDat = response.text.encode('ascii', 'ignore')
+                respDat = response.text
                 if Debug:
                     log.debug('*** SENT ***')
                     log.debug('HEADER: ' + str(response.request.headers))

@@ -156,7 +156,7 @@ class Security:
 
         if self.status:
             try:
-                ht = response.text.encode('ascii', 'ignore')
+                ht = response.text
                 pdata = json.loads(ht)
                 quote = pdata['quoteSummary']['result'][0]['price']
                 self.name = quote['shortName'] or quote['longName'] or ''
