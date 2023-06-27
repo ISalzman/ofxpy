@@ -46,7 +46,7 @@ from control2 import *  #global settings
 print('')
 log = rlib1.create_logger('root', 'setup.log')
 if Debug:
-    log.warn("**DEBUG Enabled: See Control2.py to disable.")
+    log.warning("**DEBUG Enabled: See Control2.py to disable.")
     log.debug('xfrdir = %s' % xfrdir)
 
 #global vars
@@ -132,7 +132,7 @@ def config_account():
             log.debug(response)
 
         if not stat or not '<ACCTID>' in response:
-            log.warn('An error occurred requesting accounts from the site.  Please check username and password.')
+            log.warning('An error occurred requesting accounts from the site.  Please check username and password.')
             ans = input('Continue configuring account (Yes/No): [N] ') or 'N'
             stat = True if ans[0].upper() == 'Y' else False
 

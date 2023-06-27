@@ -64,7 +64,7 @@ print('')
 userdat = site_cfg.site_cfg()
 log = create_logger('root', 'getdata.log')
 if Debug:
-    log.warn("**DEBUG Enabled: See Control2.py to disable.")
+    log.warning("**DEBUG Enabled: See Control2.py to disable.")
     log.debug('xfrdir = %s' % xfrdir)
 
 def getSite(ofx):
@@ -259,13 +259,13 @@ if __name__=="__main__":
 
         else:
             if len(AcctArray)>0 or (getquotes and len(userdat.stocks)>0):
-                log.warn("No files were downloaded. Verify network connection and try again later.")
+                log.warning("No files were downloaded. Verify network connection and try again later.")
             input("Press <Enter> to continue...")
 
         if Debug:
             input("Press <Enter> to continue...")
         elif not stat1:
-            log.warn("One or more accounts (or quotes) may not have downloaded correctly.")
+            log.warning("One or more accounts (or quotes) may not have downloaded correctly.")
             input("Review and press <Enter> to continue...")
 
     log.info('-----------------------------------------------------------------------------------')
