@@ -34,17 +34,23 @@
 
 #26Apr2020*rlc
 #   - minor bug fix (print statement)
+#19Jun2023*rlc
+#   - add logging
 
 import os, sys, glob, re, pickle, shutil, time
 import pyDes, ofx, quotes, site_cfg, filecmp
-import rlib1  #common control/utilities
+import rlib1
 from control2 import *  #global settings
 
+#startup
+print('')
+log = rlib1.create_logger('root', 'setup.log')
 if Debug:
-    import traceback
+    log.warn("**DEBUG Enabled: See Control2.py to disable.")
+    log.debug('xfrdir = %s' % xfrdir)
 
 #global vars
-#-----------
+
 BankTypes = ['CHECKING', 'SAVINGS', 'MONEYMRKT', 'CREDITLINE']
 AcctArray = []
 Sites = []
@@ -93,7 +99,7 @@ def config_account():
     i=1
     separator_line('Site List', 1)
     for site in Sitenames:
-        print(str(i)+'.', site)
+        print('%d. %s' % (i, site))
         i=i+1
     print('0. Exit')
     separator_line()
@@ -102,27 +108,31 @@ def config_account():
     if sitenum != 0 and sitenum <= len(Sitenames):
         sitenum = sitenum - 1   #index into array
         sitename = Sitenames[sitenum]
-        print('\nConfigure account for', sitename, '\n')
+        log.info('Configuring account for %s' % sitename)
         username = input('User name       : ')
         password = input('Account password: ')
 
         #query server for available (valid) accounts for user
         stat=True
         try:
+            log.info('Requesting accounts for %s @ %s' % (username, sitename))
             client = ofx.OFXClient(userdat.sites[sitename], username, password)
             query = client.acctQuery()
-            if Debug: print(query)
+            if Debug: log.debug(query)
             client.doQuery(query, tmpfile)
             if not client.status: stat=False
         except Exception as inst:
             stat=False
-            print(inst)
+            log.exception('An error occurred when executing query')
 
         with open(tmpfile, "r") as f:  response = f.read()
-        if not Debug: os.remove(tmpfile)
+        os.remove(tmpfile)
+        if Debug:
+            log.debug('**Account query response')
+            log.debug(response)
 
         if not stat or not '<ACCTID>' in response:
-            print("An error occurred requesting accounts from the site.  Please check username and password.\n")
+            log.warn('An error occurred requesting accounts from the site.  Please check username and password.')
             ans = input('Continue configuring account (Yes/No): [N] ') or 'N'
             stat = True if ans[0].upper() == 'Y' else False
 
@@ -131,8 +141,8 @@ def config_account():
 
             #account numbers may be masked, so we allow actual account numbers too
             print('\n\n*****************')
-            print('  NOTE:  If the account number is masked (e.g., XXXX-XX-1234), ')
-            print('         you MUST manually enter the account number')
+            print('  NOTE:  If the account number is masked (e.g., XXXX-XX-1234),')
+            print('         you must manually enter the actual account number')
             print('*****************\n')
             print('\nEnter line #, *or* the actual account number\n')
             print('\nAccount List')
@@ -162,10 +172,10 @@ def config_account():
                     i = 1
                     separator_line('Type of Bank Account', 1)
                     for type in BankTypes:
-                        print(str(i)+'.', type)
+                        print('%d. %s' % (i, type))
                         i=i+1
 
-                    print(str(0)+'.', 'Cancel')
+                    print('0. %s' % 'Cancel')
                     separator_line()
                     selnum= rlib1.get_int('Enter account type: [0] ')
                     if selnum == 0: return
@@ -182,9 +192,9 @@ def config_account():
                     break
 
             if exists:
-                print("Replacing", account, "for", sitename)
+                log.info('Replacing %s:%s' % (sitename, account))
             else:
-                print("Adding", account, "for", sitename)
+                log.info('Adding %s:%s' % (sitename, account))
 
             acct = [sitename, account, acctype, username, password]
             AcctArray.append(acct)
@@ -192,25 +202,28 @@ def config_account():
             #test the new account?
             test = input('Do you want to test transaction downloads for the new account now (y/n)? ').upper()
             if test=='Y':
+                log.info('Testing account %s:%s' % (sitename, account))
                 test_acct(acct)
 
 def test_acct(acct):
-    status, ofxfile = ofx.getOFX(acct,31)
+    status, ofxfile = ofx.getOFX(acct, 31)
     if status:
         if ofxfile !='':
-            print('Download completed successfully\n\n')
+            log.info('Download completed successfully')
             test = input('Send the results to Money (y/n)? ').upper()
             if test=='Y':
                 rlib1.runFile(ofxfile)
                 input('Press Enter to continue...')
+            else:
+                log.info('Results not sent to Money.  Cancelled by user.')
     else:
-        print('An online error occurred while testing the new account.')
+        log.warning('An online error occurred while testing the new account.')
 
 
 def test_quotes():
         status, ofxFile1, ofxFile2, htmFile = quotes.getQuotes()
         if status:
-            print('Download completed successfully\n\n')
+            log.info('Download completed successfully')
             ask = input('Open <Quotes.htm> in the default browser (y/n)?').upper()
             if ask=='Y':
                 os.startfile(htmFile)   #don't wait for browser close
@@ -224,14 +237,14 @@ def test_quotes():
                 rlib1.runFile(ofxFile1)
                 input('Press Enter to continue...')
         else:
-            print('An error occurred while testing Stock/Fund quotes.')
+            log.warning('An error occurred while testing Stock/Fund quotes.')
 
 
 #----------------------------------------------------------------------------------------
 if __name__=="__main__":
 
-    print(AboutTitle + ", Ver: " + AboutVersion + "\n")
-    if Debug: print('\n  **DEBUG MODE**')
+    print('')
+    log.info(AboutTitle + ", Ver: " + AboutVersion)
 
     #keep a backup copy of the sites.dat file
     backup = True
@@ -264,13 +277,13 @@ if __name__=="__main__":
         try:
             os.mkdir(xfrdir)
         except:
-            print('** Error.  Could not create', xfrdir)
+            log.exception('**Could not create %s' % xfrdir)
             system.exit()
     if not os.path.exists(importdir):
         try:
             os.mkdir(importdir)
         except:
-            print('** Error.  Could not create', importdir)
+            log.exception('**Could not create %s' % importdir)
             system.exit()
 
     #**********main menu***********
@@ -324,26 +337,27 @@ if __name__=="__main__":
             if action in ['D','R']:
                 actIndex = rlib1.get_int('Account #: [0] ') - 1
                 sitename = AcctArray[actIndex][0]
+                acctnum = AcctArray[actIndex][1]
                 user=AcctArray[actIndex][3]
                 site = Sites.get(sitename, None)
-                if site!=None: url = rlib1.FieldVal(site,'url')      #example: url='https://test.ofx.com/my/script'
+                if site: url = rlib1.FieldVal(site,'url')      #example: url='https://test.ofx.com/my/script'
 
                 if actIndex <= len(AcctArray) and actIndex >= 0 and action=='D':
                     #delete the account
-                    print("Deleting account", sitename, ":", AcctArray[actIndex][1])
+                    log.info('Deleting account %s:%s:%s' % (user, sitename, acctnum))
                     doit = input('Confirm delete (Y/N) ').upper()
                     if doit == 'Y':
                         AcctArray.pop(actIndex)
-                        print('Account %s @ %s deleted.' % (user, sitename))
+                        log.info('Account %s:%s:%s deleted.' % (user, sitename, acctnum))
 
-                if actIndex >= 0 and action in ['D','R'] and site!=None:
+                if site and actIndex >= 0 and action in ['D','R']:
                     #delete clientUID connection key if no other account has the same user/url combo
                     found=False
                     for acct in AcctArray:
                         if acct[0]==sitename and acct[3]==user: found=True
                     if not found:
                         rlib1.clientUID(url, user, delKey=True)
-                        if action=='R': print('Connection settings reset for %s @ %s' % (user, url))
+                        if action=='R': log.info('Connection settings reset for %s @ %s' % (user, url))
 
         elif menu_option == 4:
             #change security settings
@@ -368,7 +382,7 @@ if __name__=="__main__":
             #enable/disable stock quotes
             c_getquotes = not c_getquotes
             if c_getquotes:
-                doit = input('Do you want to test Quote downloads? (Y/N)? ').upper() == 'Y'
+                doit = (input('Do you want to test Quote downloads? (Y/N)? ').upper() == 'Y')
                 if doit:
                     test_quotes()
 
@@ -379,7 +393,7 @@ if __name__=="__main__":
             list_accounts()
             ticker_test = len(AcctArray)+1
             print('{0:4}{1:20}'.format(str(ticker_test)+'.','Stock/Fund Prices'))
-            print("0.  None")
+            print('0.  None')
             separator_line()
             acctnum = rlib1.get_int('Test account #: [0] ')
             if acctnum <= len(AcctArray) and acctnum != 0:
@@ -421,3 +435,4 @@ if __name__=="__main__":
     pickle.dump(c_getquotes, f)  #get stock quotes?
     pickle.dump(AcctArray, f)    #account info
     f.close()
+    log.info('-----------------------------------------------------------------------------------')
