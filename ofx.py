@@ -3,7 +3,7 @@
 
 # Original version: by Steve Dunham
 
-# Revisions
+# History
 # ---------
 # 2009: TFB @ "TheFinanceBuff.com"
 
@@ -77,6 +77,10 @@
 
 #18Aug2021*rlc
 #   - add Accept: application/x-ofx to request header.  Now required by Citi.
+#30May2023*rlc
+#   - encode requests response to ascii
+#19Jun2023*rlc
+#   - add logging
 
 import time, os, sys, urllib.parse, glob, random, re
 import requests, collections
@@ -97,6 +101,9 @@ userdat = site_cfg.site_cfg()
 class OFXClient:
     #Encapsulate an ofx client, site is a dict containg site configuration
     def __init__(self, site, user, password):
+        global log
+        log = logging.getLogger('root')
+
         self.password = password
         self.status = True
         self.user = user
@@ -115,8 +122,8 @@ class OFXClient:
         self.urlHost = urllib.parse.urlparse(self.url).netloc
         self.urlSelector = urllib.parse.urlparse(self.url).path
         if Debug:
-            print('urlHost    :', self.urlHost)
-            print('urlSelector:', self.urlSelector, '\n')
+            log.debug('urlHost    :' + self.urlHost)
+            log.debug('urlSelector:' + self.urlSelector)
         self.cookie = 3
 
     def _cookie(self):
@@ -274,23 +281,20 @@ class OFXClient:
             elif self.useragent.lower()!='none':
                 header['User-Agent'] = self.useragent
             s.headers = header
-            if Debug: print('Header:', s.headers, '\n')
 
             for i in [0,1]:
                 #retry for sites that require session cookie(s)
                 errmsg= "** An ERROR occurred sending POST request to"
                 response = s.post(self.url, data=query, verify=httpsVerify)
 
-                respDat = response.text
+                respDat = response.text.encode('ascii', 'ignore')
                 if Debug:
-                    print("\nSENT:\n----------\n")
-                    print('HEADER:', response.request.headers)
-                    print('BODY:', response.request.body)
-                    print("\nRECEIVED:\n----------\n")
-                    print('HEADER:', response.headers)
-                    if '<html>' not in respDat:
-                        #suppress html responses here, since they're *verbose*
-                        print('BODY:', respDat)
+                    log.debug('*** SENT ***')
+                    log.debug('HEADER: ' + str(response.request.headers))
+                    log.debug(response.request.body)
+                    log.debug('*** RECEIVED ***')
+                    log.debug('HEADER: ' + str(response.headers))
+                    log.debug(respDat)
                 if validOFX(respDat)=='': break
 
             if validOFX(respDat)=='':
@@ -299,19 +303,16 @@ class OFXClient:
                     respDat = re.sub(r'<\?.*\?>', '', respDat)      #remove xml header lines like <? content...content ?>
                     respDat = OfxSGMLHeader() + respDat.lstrip()
 
-            f = open(name,"w")
-            f.write(respDat)
-            f.close()
+            with open(name,"w") as f:
+                f.write(respDat)
 
         except Exception as e:
             self.status = False
-            print(errmsg, self.url)
-            print("   Exception type  :", type(e))
-            print("   Exception val   :", e)
+            log.exception(errmsg + ' ' + self.url)
 
             if response:
-                print("   HTTPS ResponseCode  :", response.status_code)
-                print("   HTTPS ResponseReason:", response.reason)
+                log.info('HTTPS ResponseCode  : ' + str(response.status_code))
+                log.info('HTTPS ResponseReason: ' + response.reason)
 
         if response: response.close()
 #------------------------------------------------------------------------------
@@ -324,6 +325,9 @@ def getOFX(account, interval):
     user       = account[3]
     password   = account[4]
     acct_num = _acct_num.split(':')[0]  #bank account# (stripped of :xxx version)
+
+    global log
+    log = logging.getLogger('root')
 
     #get site and other user-defined data
     site = userdat.sites[sitename]
@@ -340,17 +344,17 @@ def getOFX(account, interval):
     #add delay prior to connect if defined for site
     delay = FieldVal(site, "DELAY")
     if delay > 0.0:
-        print("Delaying %.1f seconds..." % delay)
+        log.info('Delaying %.1f seconds...' % delay)
         time.sleep(delay)
 
     client = OFXClient(site, user, password)
-    print(sitename,':',acct_num,": Getting records since: ",dtstart)
+    log.info('%s: %s: Getting records since: %s' % (sitename,acct_num,dtstart))
 
     status = True
 
     #remove illegal WinFile characters from the file name (in case someone included them in the sitename)
     #Also, the os.system() call doesn't allow the '&' char, so we'll replace it too
-    sitename = ''.join(a for a in sitename if a not in ' &\/:*?"<>|()')  #first char is a space
+    sitename = ''.join(a for a in sitename if a not in ' &\/:*?"!=|()')  #first char is a space
 
     ofxFileSuffix = str(random.randrange(1e5,1e6)) + ".ofx"
     ofxFileName = xfrdir + sitename + dtnow + ofxFileSuffix
@@ -383,13 +387,6 @@ def getOFX(account, interval):
                 msg='** Error: Site', sitename, 'missing (REQUIRED) AcctType value.'
                 raise Exception(msg)
 
-        SendRequest = True
-        if Debug:
-            print(query)
-            print()
-            ask = input('DEBUG:  Send request to bank server (y/n)?').upper()
-            if ask=='N': return True, ''
-
         #do the deed
         client.doQuery(query, ofxFileName)
         if not client.status: return False, ''
@@ -412,27 +409,18 @@ def getOFX(account, interval):
             content = ''.join(a for a in content if a not in '\r\n ')  #strip newlines & spaces
             msg = validOFX(content)  #checks for valid format and error messages
 
-            if msg!='':
+            if msg != '':
                 #throw exception and exit
                 raise Exception(msg)
-
-            #attempted debug of a Vanguard issue... rlc*2010
-            if content.find('<INVPOS>') > -1 and content.find('<SECLIST>') < 0:
-                #An investment statement must contain a <SECLIST> section when a <INVPOSLIST> section exists
-                #Some Vanguard statements have been missing this when there are no transactions, causing Money to crash
-                #It may be necessary to match every investment position with a security entry, but we'll try to just
-                #verify the existence of these section pairs. rlc*9/2010
-                raise Exception("OFX statement is missing required <SECLIST> section.")
 
             #cleanup the file if needed
             scrubber.scrub(ofxFileName, site)
 
-    except Exception as inst:
+    except Exception as e:
         status = False
-        print(inst)
+        log.exception(msg)
+
         if glob.glob(ofxFileName) != []:
-           print('**  Review', ofxFileName, 'for possible clues...')
-        if Debug:
-            traceback.print_exc()
+           log.info('**  Review ' + ofxFileName + ' for possible clues.')
 
     return status, ofxFileName

@@ -5,7 +5,7 @@
 
 # Intial version: rlc: Feb-2010
 
-# Revisions
+# History
 # ---------
 # 01Mar2009*rlc
 #   - Modified to include additional data fields (appid, appver, and brokerid).
@@ -48,6 +48,8 @@
 #   -add support for the following site parameters: dtacctup, useragent, clientuid, skipzerotrans
 # 10Mar2021*rlc
 #   - add support for promptStart and promptEnd parameters in sites.dat
+# 25May2023*rlc
+#   -change YahooURL for new v10 service
 
 import os, glob, re, random
 from rlib1 import *
@@ -90,7 +92,7 @@ class site_cfg:
         self.funds = []
         self.defaultInterval = 7
         self.promptInterval=False
-        self.YahooURL = 'http://query1.finance.yahoo.com/v7/finance/quote'
+        self.YahooURL = 'https://query2.finance.yahoo.com/v10/finance/quoteSummary/%s?modules=price'
         self.GoogleURL = 'http://www.google.com/finance/quote'
         self.datfile= 'sites.dat'
         self.bakfile= 'sites.bak'
@@ -128,13 +130,6 @@ class site_cfg:
         self.load_sites()
         self.load_stocks()
         self.load_funds()
-
-        #sanity check: alternate Yahoo URL should only contain site address
-        YAHOOURL = self.YahooURL.upper()
-        i = YAHOOURL.find("/D/QUOTES.CSV")
-        if i > -1:
-            self.YahooURL = self.YahooURL[:i]
-            print(" * YahooURL truncated to", self.YahooURL, "\n")
 
     def load_sites(self):
         f = open(self.datfile, 'r')
