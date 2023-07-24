@@ -78,11 +78,11 @@
 # 25May2023*rlc
 #   -Update to use Yahoo v10 service and cleanup json parse to remove csv-oriented format
 
-import os, requests, re, json
+import os, requests, re, json, pickle
 import site_cfg
 from control2 import *
 from rlib1 import *
-from datetime import datetime
+from datetime import datetime, timedelta
 
 join = str.join
 
@@ -124,11 +124,6 @@ class Security:
             self.getYahooQuote()
             if self.status: self.source='Y'
 
-        if not self.status and eGoogle:
-            # try screen scrape
-            quote = self.getGoogleQuote()
-            if self.status: self.source='G'
-
         if not self.status:
             log.info('** %s: invalid quote response. Skipping.' % self.ticker)
             self.name = '*InvalidSymbol*'
@@ -141,14 +136,13 @@ class Security:
         #read Yahoo json data api, and return csv
         #returns: quote= [name, price, quoteTime, pclose, pchange], all as strings
 
-        jsonURL = YahooURL % self.ticker
-        self.quoteURL = 'https://finance.yahoo.com/quote/%s' % self.ticker  #link to pretty view
+        jsonURL = (YahooURL+'&crumb={crumb}').format(ticker=self.ticker, crumb=yahooCrumb)
+        self.quoteURL = 'https://finance.yahoo.com/quote/{ticker}'.format(ticker=self.ticker)  #link to pretty view
         if Debug: log.debug('Reading ' + jsonURL)
         self.status=True
 
         try:
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 6.2; Win64; x64)'}
-            response=requests.get(jsonURL, headers=headers)
+            response=yahooSession.get(jsonURL)
 
         except:
             if Debug: log.debug('** Error reading %s' % self.quoteURL)
@@ -174,12 +168,6 @@ class Security:
                 #not formatted as expected?
                 if Debug: log.debug('An error occured when parsing the Yahoo Finance response for %s' % self.ticker)
                 self.status=False
-
-    def getGoogleQuote(self):
-        #not supported
-        #placeholder for possible addition
-        self.status=False
-        return None
 
 class OfxWriter:
     """
@@ -337,10 +325,69 @@ class OfxWriter:
         f.write(self.getOfxMsg())
         f.close()
 
+def getYahooSession():
+    #create requests session for yahoo finance
+    #gets session cookie/crumb and reuses until it expires
+    #deleting cookie file will force a refresh
+
+    cookieFile='cookies.dat'
+    yCookies, cookie, crumb=None, None, None
+
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 6.2; Win64; x64)'}
+    if glob.glob(cookieFile):
+        #read cookie info
+        try:
+            with open(cookieFile, 'rb') as f:
+                data=pickle.load(f)
+                yahooFin = data['yahooFinance']
+                cookie = yahooFin['cookie']
+                crumb  = yahooFin['crumb']
+                expires = datetime.fromtimestamp(cookie.expires)
+                if datetime.now() > (expires - timedelta(days=1)):
+                    cookie=None
+        except Exception as e:
+            log.debug('Error loading %s' % cookieFile)
+
+    if not cookie:
+        #cookie not found or expiring soon.  refresh
+        log.info('Fetching new Yahoo Finance cookie')
+        response = requests.get("https://fc.yahoo.com", headers=headers, allow_redirects=True)
+        if not response.cookies:
+            log.error("Failed to obtain Yahoo auth cookie")
+        else:
+            yCookies=response.cookies   #requests cookiejar
+
+        cookie = list(yCookies)[0]      #first cookie in cookiejar.  namespace type with all fields (i.e., cookie.name, cookie.value, etc.)
+        expires = datetime.fromtimestamp(cookie.expires)
+
+        crumb = None
+        crumb_response = requests.get("https://query2.finance.yahoo.com/v1/test/getcrumb",
+                headers=headers,
+                cookies=yCookies,
+                allow_redirects=True,
+            )
+        crumb = crumb_response.text
+        if crumb is None:
+            log.error("Failed to retrieve Yahoo crumb")
+
+        #save cookie info
+        cookieData = {'yahooFinance': {'cookie': cookie, 'crumb': crumb}}
+        with open(cookieFile,'wb') as f:
+            pickle.dump(cookieData, f)
+
+    if Debug:
+        log.debug('YahooFinance: cookie={cookie}, expires={expires}, crumb={crumb}'.format(
+                    cookie=cookie, expires=expires.strftime('%m/%d/%Y'), crumb=crumb)
+                 )
+    session = requests.session()
+    session.headers.update(headers)
+    session.cookies.update({cookie.name: cookie.value})
+    return session, crumb
+
 #----------------------------------------------------------------------------
 def getQuotes():
 
-    global YahooURL, eYahoo, GoogleURL, eGoogle, YahooTimeZone
+    global YahooURL, eYahoo, YahooTimeZone
     status = True    #overall status flag across all operations (true == no errors getting data)
 
     global log
@@ -352,27 +399,29 @@ def getQuotes():
     funds = userdat.funds
     eYahoo = userdat.enableYahooFinance
     YahooURL = userdat.YahooURL
-    GoogleURL = userdat.GoogleURL
-    eGoogle = userdat.enableGoogleFinance
     YahooTimeZone = userdat.YahooTimeZone
     currency = userdat.quotecurrency
     account = userdat.quoteAccount
     ofxFile1, ofxFile2, htmFileName = '','',''
 
-    stockList = []
-    log.info('Getting security and fund quotes')
-    for item in stocks:
-        sec = Security(item)
-        sec.getQuote()
-        status = status and sec.status
-        if sec.status: stockList.append(sec)
+    #use single requests session for all
+    global yahooSession, yahooCrumb
+    yahooSession, yahooCrumb = getYahooSession()
 
-    mfList = []
-    for item in funds:
-        sec = Security(item)
-        sec.getQuote()
-        status = status and sec.status
-        if sec.status: mfList.append(sec)
+    log.info('Getting security and fund quotes')
+    stockList, mfList = [], []
+    with yahooSession:
+        for item in stocks:
+            sec = Security(item)
+            sec.getQuote()
+            status = status and sec.status
+            if sec.status: stockList.append(sec)
+
+        for item in funds:
+            sec = Security(item)
+            sec.getQuote()
+            status = status and sec.status
+            if sec.status: mfList.append(sec)
 
     qList = stockList + mfList
 
