@@ -121,12 +121,12 @@ def config_account():
             if Debug: log.debug(query)
             client.doQuery(query, tmpfile)
             if not client.status: stat=False
+            with open(tmpfile, "r") as f:  response = f.read()
+            os.remove(tmpfile)
         except Exception as inst:
             stat=False
             log.exception('An error occurred when executing query')
 
-        with open(tmpfile, "r") as f:  response = f.read()
-        os.remove(tmpfile)
         if Debug:
             log.debug('**Account query response')
             log.debug(response)

@@ -50,6 +50,8 @@
 #   - add support for promptStart and promptEnd parameters in sites.dat
 # 25May2023*rlc
 #   -change YahooURL for new v10 service
+# 17Jul2023*rlc
+#   -remove reference to google finance.  not supported
 
 import os, glob, re, random
 from rlib1 import *
@@ -92,7 +94,7 @@ class site_cfg:
         self.funds = []
         self.defaultInterval = 7
         self.promptInterval=False
-        self.YahooURL = 'https://query2.finance.yahoo.com/v10/finance/quoteSummary/%s?modules=price'
+        self.YahooURL = 'https://query2.finance.yahoo.com/v10/finance/quoteSummary/{ticker}?modules=price'
         self.GoogleURL = 'http://www.google.com/finance/quote'
         self.datfile= 'sites.dat'
         self.bakfile= 'sites.bak'
@@ -108,7 +110,6 @@ class site_cfg:
         self.forceQuotes = False
         self.quoteAccount = '0123456789'
         self.enableYahooFinance = True
-        self.enableGoogleFinance = False
         self.skipZeroTransactions = False
         self.skipFailedLogon = True
         self.promptStart = True
@@ -232,10 +233,6 @@ class site_cfg:
 
                     if field == 'ENABLEYAHOOFINANCE':
                         self.enableYahooFinance = (value[:1].upper() == 'Y')
-
-                    #Google Finance is no longer supported
-                    #if field == 'ENABLEGOOGLEFINANCE':
-                    #    self.enableGoogleFinance = (value[:1].upper() == 'Y')
 
                     if field == 'YAHOOURL':
                         self.YahooURL = value
